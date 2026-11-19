@@ -835,12 +835,12 @@ group('3g. 换肤：三套皮肤 + 记住选择');
     }
   });
 
-  check('设置页里能选外观，选中值就是当前皮肤', () => {
+  check('设置弹层里能选外观，选中值就是当前皮肤', () => {
     const api = fakeApi('hours', views.hours);
     react.presets({ WorkPage: { 2: 'hours', 3: '2026-10', 4: true } });
     const { tree } = react.render(react.createElement(slots.main.component, { api }));
-    const page = findNode(tree, (n) => n.type === 'div' && n.props?.className === 'aw-settings-page');
-    assert.ok(page, '设置页没渲染');
+    const page = findNode(tree, (n) => n.type === 'div' && n.props?.className === 'aw-modal is-settings');
+    assert.ok(page, '设置弹层没渲染');
     const select = findNode(page, (n) => n.type === 'select' && (n.children || []).some((o) => o.type === 'option' && /暮色/.test(textOf(o))));
     assert.ok(select, '找不到「外观」下拉');
     const options = (select.children || []).map((o) => textOf(o).trim());
@@ -861,24 +861,21 @@ group('3g. 换肤：三套皮肤 + 记住选择');
 
 group('3g3. 设置弹层与分页条的紧凑度');
 {
-  check('设置页是行式布局：左名称右控件，组间大留白', () => {
+  check('设置弹层是行式布局：左名称右控件，组间大留白', () => {
     const css = cssOf(renderPage('today').tree) || '';
-    for (const rule of ['.aw-settings-page{', '.aw-set-group{', '.aw-set-row{', '.aw-set-label{', '.aw-set-ctl{']) {
-      assert.ok(css.includes(rule), `缺少 ${rule} —— 设置页会失去行式布局`);
+    for (const rule of ['.aw-modal.is-settings{', '.aw-set-group{', '.aw-set-row{', '.aw-set-label{', '.aw-set-ctl{']) {
+      assert.ok(css.includes(rule), `缺少 ${rule} —— 设置弹层会失去行式布局`);
     }
     // 一行一项：两列栅格，名称在左、控件在右
     const row = (css.match(/^\.aw-set-row\{[^}]*\}/m) || [])[0];
     assert.match(row, /grid-template-columns:minmax\(0,1fr\) minmax\(220px,360px\)/, `行应当是「名称 | 控件」两列：${row}`);
     // 组间多留白、组内少留白
     const group = (css.match(/^\.aw-set-group\{[^}]*\}/m) || [])[0];
-    assert.match(group, /margin-top:34px/, `组间距应当明显大于行间距：${group}`);
-    assert.match(row, /padding:14px 0/, `行内边距应当更小：${row}`);
-    // 不再有外层卡片
-    // 设置页独占内容区（flash 例外：保存提示要看得到）
-    assert.ok(
-      /\.aw-inner\.is-settings>\*:not\(\.aw-settings-page\):not\(\.aw-flash\)\{display:none!important\}/.test(css),
-      '设置页应当独占内容区（且保留 flash 提示）',
-    );
+    assert.match(group, /margin-top:40px/, `组间距应当明显大于行间距：${group}`);
+    assert.match(row, /padding:10px 0/, `行内边距应当更小：${row}`);
+    // 弹窗自身是唯一的框：没有整页接管的隐藏规则，也不再套一层设置页卡片
+    assert.ok(!/\.aw-inner\.is-settings/.test(css), '不应再有整页接管的隐藏规则');
+    assert.ok(!/\.aw-settings-page\{/.test(css), '不应再套一层设置页卡片');
   });
 
   check('分页是左栏竖排导航，选中项有指示条', () => {

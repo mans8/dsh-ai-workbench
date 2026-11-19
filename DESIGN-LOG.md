@@ -2953,6 +2953,41 @@ gate 40 是 **Floor 级，Hallmark 不允许豁免** —— 所以它不会变�
 - 其余检查：0 REFLEX · 0 WARN
 - Client 114 / Host 150
 
+## A52. 设置改回弹窗表单（面板即唯一框）
+
+用户真机三条（与 A51 同源，但要求落回弹窗）：
+
+1. 名称放左、控件放右，一项占一行
+2. 去掉最外面一层框，不再套卡片
+3. 每组加标题，组间多留白、组内少留白，删除操作单独放
+
+### 结构变化
+
+把 A51 的 `SettingsPage`（整页视图，靠 `.aw-inner.is-settings` 隐藏兄弟节点）改回 **`Modal` 弹窗 + `SettingsModal` 内容**：
+
+- 删掉 `.aw-inner.is-settings>*:not(.aw-settings-page):not(.aw-flash){display:none!important}` 这条整页接管规则，`.aw-inner` 恢复普通类名
+- 设置移出内容区，作为 `.aw-page` 的直接子节点由 `Modal` 渲染；顶栏「设置」按钮照旧打开
+- `Modal` 新增可选 `className`，设置弹层传 `is-settings` → `.aw-modal.is-settings{max-width:820px;max-height:min(84vh,860px)}`
+- 面板本身就是唯一的框：删掉 `.aw-settings-page` 包装和页头，内容直接放进 `.aw-set-body`（超高时内部滚动），不再有内层卡片
+- 底部动作栏保留版本信息，按钮由「返回 / 保存设置」改为「关闭 / 保存设置」；点遮罩、点「关闭」都走 `onClose`
+
+### 三条要求怎么落的
+
+| 要求 | 做法 |
+|---|---|
+| 左名称、右控件、一行一项 | `.aw-set-row` 两列栅格 `minmax(0,1fr) minmax(220px,360px)`；名称下可带灰字 hint |
+| 去掉外框/卡片 | 只保留 `Modal` 面板（`.aw-modal.is-settings`），里面没有第二层卡片 |
+| 组标题 + 组间大、组内小 | 组间距从 **34px → 40px**，行内边距从 **14px → 10px**，`.aw-set-rows` 上边距 10px → 6px |
+| 删除操作单独放 | 最后一组「危险操作」（红色标题）：已覆盖的日期（逐条 ×）+ 清除全部覆盖 |
+
+### 验证
+
+- 120 项断言全绿：`设置弹层里能选外观` 改为按 `.aw-modal.is-settings` 查找；行式布局断言改为 40px / 10px，并显式断言整页接管规则和 `.aw-settings-page` 已消失
+- `design.md` §4.6 改回「设置弹层」并更新示意图与数值；§4.7 补充设置弹层的宽度/滚动规则
+- `README.md` 本来就写的是弹窗，无需改动
+
+---
+
 ## A51. 设置改成整页、一行一项
 
 真机三条：

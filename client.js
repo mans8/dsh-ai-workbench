@@ -150,7 +150,7 @@ const CSS = `
  * paper: #F4F7FE 淡紫灰 · card: #FFFFFF · ink: #1B2559 海军蓝 · muted: #A3AED0 · accent: #4318FF 靛蓝 · accent-2: #6AD2FF 浅青
  * nav: 左侧 rail，选中=靛蓝文字 + 图标 + 右缘 3px 指示条 · signature: 白卡台账（20px 圆角 + 极柔阴影）· states: full, empty, loading, error
  * axes: horizon/indigo-cyan/white-card · posture: committed · contrast: pass · skins: horizon(默认), lido, dusk, jade · v5.0.0
- * build: v1.0.0 · A51 设置改整页 + 一行一项（左名右控件，分组，删除单列）· A50 描边照抄 · A49 Pixso 校准 · A47 design.md 契约
+ * build: v1.0.0 · A52 设置改回弹窗（面板唯一框，一行一项，分组，删除单列）· A51 曾改整页 · A50 描边照抄 · A49 Pixso 校准 · A47 design.md 契约
  * sweep: 4 FAIL (gate 40, 输入框描边 1.26:1) — 用户明确要求照抄参考稿的 #E0E5F2，属有意偏离，非漏改
  * 其余 0 REFLEX · 0 WARN (app scope, 20 route×skin) · copy: verbatim · 可读性由「字段上方标签 + 占位符」承担
  * 与参考的偏差：参考用紫蓝渐变做「Upgrade to PRO」卡与柱图，这里一律用实色靛蓝（Hallmark 2a 禁紫蓝渐变） */
@@ -469,19 +469,17 @@ const CSS = `
   box-shadow:0 32px 64px -24px oklch(30% 0.06 265 / 0.4);display:flex;flex-direction:column;gap:18px}
 .aw-modal h3{margin:0;font-size:20px;font-weight:600;letter-spacing:-.02em;color:var(--ink)}
 
-/* ── 设置页：无外框，一行一项，左名称右控件 ─────────────────── */
-/* 设置页独占内容区：分页内容自身带内联 display，需要 !important 才能压住；
-   flash 例外 —— 保存后的提示必须还看得见。 */
-.aw-inner.is-settings>*:not(.aw-settings-page):not(.aw-flash){display:none!important}
-.aw-settings-page{display:flex;flex-direction:column;max-width:820px}
-.aw-settings-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;padding-bottom:6px}
-.aw-set-group{margin-top:34px}
-.aw-set-group:first-of-type{margin-top:14px}
+/* ── 设置弹窗：面板本身就是唯一的框，里面不再套卡片 ─────────── */
+/* 一行一项：左名称、右控件；分组有标题，组间大留白、组内小留白。 */
+.aw-modal.is-settings{max-width:820px;max-height:min(84vh,860px);overflow:hidden}
+.aw-set-body{overflow-y:auto;min-height:0;padding-right:6px}
+.aw-set-group{margin-top:40px}
+.aw-set-group:first-of-type{margin-top:4px}
 .aw-set-group-title{margin:0 0 2px;font-size:13px;font-weight:600;color:var(--ink);letter-spacing:0}
 .aw-set-group.is-danger .aw-set-group-title{color:var(--danger)}
-.aw-set-rows{border-top:1px solid var(--rule-2);margin-top:10px}
+.aw-set-rows{border-top:1px solid var(--rule-2);margin-top:6px}
 .aw-set-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,360px);gap:24px;align-items:center;
-  padding:14px 0;border-bottom:1px solid var(--rule-2)}
+  padding:10px 0;border-bottom:1px solid var(--rule-2)}
 .aw-set-row.is-wide{grid-template-columns:1fr;align-items:start;gap:6px}
 .aw-set-row.is-stacked{grid-template-columns:1fr;align-items:start;gap:10px}
 .aw-set-row.is-stacked>.aw-set-ctl{max-width:none;justify-content:flex-start;flex-direction:column;align-items:stretch;gap:8px}
@@ -912,7 +910,7 @@ const CSS = `
             if (event.target === event.currentTarget) props.onClose();
           },
         },
-        h('div', { className: 'aw-modal' }, props.title ? h('h3', null, props.title) : null, props.children),
+        h('div', { className: `aw-modal${props.className ? ` ${props.className}` : ''}` }, props.title ? h('h3', null, props.title) : null, props.children),
       );
     }
 
@@ -3044,11 +3042,11 @@ const CSS = `
     }
 
     /**
-     * 设置页：一行一项，左边名称、右边控件；分组标题 + 组间大留白。
-     * 不再是弹窗，也不再套一层卡片 —— 内容直接铺在画布上。
+     * 设置弹窗的内容：一行一项，左边名称、右边控件；分组标题 + 组间大留白。
+     * 外框由 Modal 承担，这里只放内容，不再套一层卡片。
      */
-    function SettingsPage(props) {
-      const { api, boot, skin, onSkin, onBack, styleOk } = props;
+    function SettingsModal(props) {
+      const { api, boot, skin, onSkin, onClose, styleOk } = props;
       const [draft, setDraft] = React.useState(() => bootToDraft(boot));
       const [override, setOverride] = React.useState({ date: '', kind: 'holiday' });
 
@@ -3087,25 +3085,7 @@ const CSS = `
 
       return h(
         'div',
-        { className: 'aw-settings-page' },
-
-        /* 页头：标题在左，动作在右 */
-        h(
-          'div',
-          { className: 'aw-settings-head' },
-          h(
-            'div',
-            null,
-            h('div', { className: 'aw-crumb' }, 'AI 工作台账 / 设置'),
-            h('div', { className: 'aw-title' }, h('span', null, '设置')),
-          ),
-          h(
-            'div',
-            { className: 'aw-split-row' },
-            h(Btn, { tone: 'ghost', onClick: onBack }, '返回'),
-            h(Btn, { tone: 'primary', onClick: save }, '保存设置'),
-          ),
-        ),
+        { className: 'aw-set-body' },
 
         /* ── 外观 ── */
         h(
@@ -3325,12 +3305,12 @@ const CSS = `
           ),
         ),
 
-        /* 页脚：版本 + 保存 */
+        /* 底部：版本 + 关闭 / 保存 */
         h(
           'div',
           { className: 'aw-set-foot' },
           h('div', { className: 'aw-set-meta' }, `界面版本 ${BUILD} · 样式${styleOk === null ? '未知' : styleOk ? '已生效' : '未生效'} · 如果样式不对，先完全退出 DSH 再打开`),
-          h(Btn, { tone: 'ghost', onClick: onBack }, '返回'),
+          h(Btn, { tone: 'ghost', onClick: onClose }, '关闭'),
           h(Btn, { tone: 'primary', onClick: save }, '保存设置'),
         ),
       );
@@ -3535,7 +3515,7 @@ const CSS = `
             { className: 'aw-main' },
             h(
               'div',
-              { className: `aw-inner${settingsOpen ? ' is-settings' : ''}` },
+              { className: 'aw-inner' },
               flash ? h('div', { className: `aw-flash is-${flash.kind}` }, flash.text) : null,
 
               h(
@@ -3589,20 +3569,25 @@ const CSS = `
                 snap.loading ? '加载中…' : '工作台账 · 数据全部保存在本机 ~/ai-workbench/state.json',
               ),
 
-              // 设置是这一层里的整页视图：打开时其它内容隐藏，不再额外套一层卡片
-              settingsOpen
-                ? h(SettingsPage, {
-                    api,
-                    boot,
-                    skin,
-                    onSkin: setSkin,
-                    styleOk,
-                    onBack: () => setSettingsOpen(false),
-                  })
-                : null,
             ),
           ),
         ),
+
+        /* 设置是弹窗：面板自身是唯一的框，里面不再套卡片 */
+        h(Modal, {
+          open: settingsOpen,
+          className: 'is-settings',
+          title: '设置',
+          onClose: () => setSettingsOpen(false),
+          children: h(SettingsModal, {
+            api,
+            boot,
+            skin,
+            onSkin: setSkin,
+            styleOk,
+            onClose: () => setSettingsOpen(false),
+          }),
+        }),
 
       );
     }
