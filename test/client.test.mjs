@@ -1297,6 +1297,87 @@ group('3c. 优先级 P0~P3 的含义必须写在界面上');
   });
 }
 
+group('3c2. 新增待办弹层：× 关闭 + 纵向全宽表单');
+{
+  /** 打开「新增待办」弹层；extra 可预设 TodayTab 后续 hook（4=脏标记）。 */
+  const openAdd = (extra = {}) => renderPage('today', { TodayTab: { 3: true, ...extra } });
+
+  check('标题栏右上角有 × 关闭按钮', () => {
+    const { tree } = openAdd();
+    const modal = findNode(tree, (n) => n.type === 'div' && n.props?.className === 'aw-modal');
+    assert.ok(modal, '没有找到新增待办弹层');
+    const head = findNode(modal, (n) => n.type === 'div' && n.props?.className === 'aw-modal-head');
+    assert.ok(head, '缺少标题栏容器');
+    const close = findNode(head, (n) => n.type === 'button' && n.props?.['aria-label'] === '关闭');
+    assert.ok(close, '标题栏缺少 × 关闭按钮');
+    assert.ok(textOf(close).includes('×'), '关闭按钮应显示 × 图标');
+  });
+
+  check('表单改成一项一行：纵向容器 + 每项都有上方名称', () => {
+    const { tree } = openAdd();
+    const form = findNode(tree, (n) => n.type === 'div' && n.props?.className === 'aw-form-vertical');
+    assert.ok(form, '缺少纵向表单容器');
+    const fields = (form.children || []).filter((n) => n.type === 'div' && /aw-field/.test(n.props?.className || ''));
+    assert.ok(fields.length >= 6, `应有至少 6 个字段，实际 ${fields.length}`);
+    for (const label of ['待办标题', '所属项目', '优先级', '预估工时', '计划日期', '重复任务', '顺延策略']) {
+      assert.ok(textOf(form).includes(label), `缺少字段名称「${label}」`);
+    }
+  });
+
+  check('控件全宽，输入框不再带固定宽度', () => {
+    const { tree } = openAdd();
+    const css = cssOf(tree);
+    assert.ok(/\.aw-form-vertical \.aw-input,\s*\.aw-form-vertical \.aw-select\{width:100%\}/.test(css), '缺少全宽样式');
+    const form = findNode(tree, (n) => n.type === 'div' && n.props?.className === 'aw-form-vertical');
+    const inputs = [];
+    (function walk(node) {
+      if (!node) return;
+      if (node.type === 'input' && /aw-input/.test(node.props?.className || '')) inputs.push(node.props);
+      for (const child of node.children || []) walk(child);
+    })(form);
+    assert.ok(inputs.length > 0, '没有输入框');
+    assert.ok(inputs.every((p) => !p.style || !p.style.width), `还有固定宽度的输入框：${JSON.stringify(inputs.map((p) => p.style))}`);
+  });
+
+  check('「新建」按钮独占一行，优先级图例在它下方', () => {
+    const { tree } = openAdd();
+    const form = findNode(tree, (n) => n.type === 'div' && n.props?.className === 'aw-form-vertical');
+    const kids = form.children || [];
+    const submitIdx = kids.findIndex((n) => n.type === 'div' && n.props?.className === 'aw-submit-wrap');
+    const noteIdx = kids.findIndex((n) => n.type === 'span' && n.props?.className === 'aw-note');
+    assert.ok(submitIdx >= 0, '缺少全宽提交按钮容器');
+    assert.ok(noteIdx > submitIdx, '优先级图例应在提交按钮下方');
+  });
+
+  /** 找到弹层标题栏的 × 按钮。 */
+  const closeButton = (tree) => findNode(tree, (n) => n.type === 'button' && n.props?.['aria-label'] === '关闭');
+
+  check('点 × 时：干净表单直接关闭', () => {
+    const first = renderPage('today', { TodayTab: { 3: true } });
+    const close = closeButton(first.tree);
+    assert.ok(close, '缺少 × 按钮');
+    close.props.onClick();
+    // 不重置实例再渲染一次，才能读到 setter 写入的新状态
+    const after = react.render(react.createElement(slots.main.component, { api: first.api }));
+    assert.ok(!textOf(after.tree).includes('新增待办'), '干净表单点 × 应直接关闭');
+  });
+
+  check('点 × 时：脏表单先弹确认，放弃填写才真正关闭', () => {
+    const first = renderPage('today', { TodayTab: { 3: true, 4: true } });
+    assert.ok(!first.text.includes('确认放弃填写？'), '没点 × 之前不该弹确认');
+    closeButton(first.tree).props.onClick();
+    const after = react.render(react.createElement(slots.main.component, { api: first.api }));
+    const text = textOf(after.tree);
+    assert.ok(text.includes('已填写的内容尚未保存，确认放弃填写？'), '脏表单点 × 应弹确认');
+    assert.ok(text.includes('放弃填写') && text.includes('继续填写'), '确认条缺少操作按钮');
+
+    const giveUp = findNode(after.tree, (n) => n.type === 'button' && textOf(n).trim() === '放弃填写');
+    giveUp.props.onClick();
+    const closed = react.render(react.createElement(slots.main.component, { api: first.api }));
+    assert.ok(!textOf(closed.tree).includes('新增待办'), '放弃填写后弹层应关闭');
+  });
+}
+
 group('3e. 今日页只保留一块面板，各节用分割线');
 {
   /** 收集某一类节点的数量。 */

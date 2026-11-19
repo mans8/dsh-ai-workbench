@@ -399,6 +399,15 @@ const CSS = `
 .aw-form{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 .aw-field{display:flex;flex-direction:column;gap:6px;min-width:0}
 .aw-field>label{font-size:var(--fs-caption);font-weight:500;color:var(--muted)}
+/* 新建待办：一项一行、名称在上、控件全宽 */
+.aw-form-vertical{display:flex;flex-direction:column;gap:14px}
+.aw-form-vertical .aw-field{width:100%}
+.aw-form-vertical .aw-input,.aw-form-vertical .aw-select{width:100%}
+.aw-form-vertical .aw-weekdays{display:flex;gap:6px;flex-wrap:wrap}
+.aw-form-vertical .aw-submit-wrap{width:100%}
+.aw-form-vertical .aw-submit-wrap .aw-btn{width:100%}
+.aw-modal-confirm{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px;order:-1;
+  border-radius:var(--r-input);background:var(--paper-3);color:var(--ink-2);font-size:var(--fs-meta)}
 
 .aw-icon-btn{appearance:none;cursor:pointer;width:30px;height:30px;padding:0;border-radius:999px;
   border:0;background:transparent;color:var(--muted);
@@ -468,6 +477,9 @@ const CSS = `
 .aw-modal{background:var(--paper-2);border-radius:24px;padding:28px;width:100%;max-width:660px;
   box-shadow:0 32px 64px -24px oklch(30% 0.06 265 / 0.4);display:flex;flex-direction:column;gap:18px}
 .aw-modal h3{margin:0;font-size:20px;font-weight:600;letter-spacing:-.02em;color:var(--ink)}
+.aw-modal-head{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.aw-modal-close{flex:0 0 auto;font-size:22px;line-height:1}
+@media (max-width:520px){.aw-modal{padding:20px 16px;border-radius:18px}.aw-form-vertical{gap:12px}}
 
 /* ── 设置弹窗：面板本身就是唯一的框，里面不再套卡片 ─────────── */
 /* 一行一项：左名称、右控件；分组有标题，组间大留白、组内小留白。 */
@@ -902,6 +914,22 @@ const CSS = `
 
     function Modal(props) {
       if (!props.open) return null;
+      // closable 是可选开关：只有「新增待办」这类需要明确关闭入口的弹层才显示右上角 ×。
+      // 不开时保留原结构（标题仍是 .aw-modal 的直接子节点），不影响其它编辑器弹窗。
+      const head = props.closable
+        ? h(
+            'div',
+            { className: 'aw-modal-head' },
+            props.title ? h('h3', null, props.title) : null,
+            h(
+              'button',
+              { type: 'button', className: 'aw-icon-btn aw-modal-close', title: '关闭', 'aria-label': '关闭', onClick: props.onClose },
+              '×',
+            ),
+          )
+        : props.title
+          ? h('h3', null, props.title)
+          : null;
       return h(
         'div',
         {
@@ -910,7 +938,7 @@ const CSS = `
             if (event.target === event.currentTarget) props.onClose();
           },
         },
-        h('div', { className: `aw-modal${props.className ? ` ${props.className}` : ''}` }, props.title ? h('h3', null, props.title) : null, props.children),
+        h('div', { className: `aw-modal${props.className ? ` ${props.className}` : ''}` }, head, props.children),
       );
     }
 
@@ -1042,6 +1070,9 @@ const CSS = `
       const [editing, setEditing] = React.useState(null);
       // 新增待办改成弹层：入口在「今日待办」节头上
       const [adding, setAdding] = React.useState(false);
+      // 关闭确认：脏数据标记由 TodoCreator 回填，只有这一个弹层用
+      const [todoDirty, setTodoDirty] = React.useState(false);
+      const [confirmTodoClose, setConfirmTodoClose] = React.useState(false);
 
       if (!view || !view.stats || !Array.isArray(view.todos)) return h(Empty, null, '加载中…');
       const projects = view.projects || [];
@@ -1075,6 +1106,15 @@ const CSS = `
           ? { label: '待归档草稿', value: String(boot.counts.draftReports), unit: '份', icon: 'draft' }
           : { label: '积压', value: String(view.stats.backlogCount), unit: '项', icon: 'backlog' },
       ].filter(Boolean);
+
+      // × 与点遮罩走同一条关闭路径：脏表单先确认，干净的直接关
+      const closeTodo = () => {
+        if (todoDirty) {
+          setConfirmTodoClose(true);
+          return;
+        }
+        setAdding(false);
+      };
 
       return h(
         'div',
@@ -1140,7 +1180,7 @@ const CSS = `
             {
               first: true,
               title: h('span', null, '今日待办'),
-              extra: h(Btn, { small: true, tone: 'primary', disabled: busy, onClick: () => setAdding(true) }, '新增'),
+              extra: h(Btn, { small: true, tone: 'primary', disabled: busy, onClick: () => { setTodoDirty(false); setConfirmTodoClose(false); setAdding(true); } }, '新增'),
             },
             view.todos.length === 0
               ? h(Empty, null, '今天没有待办 —— 要么清空了，要么还没建。')
@@ -1307,9 +1347,33 @@ const CSS = `
 
         h(
           Modal,
-          { open: adding, title: '新增待办', onClose: () => setAdding(false) },
-          h(TodoCreator, { api, projects, busy, onDone: () => setAdding(false) }),
+          { open: adding, closable: true, title: '新增待办', onClose: closeTodo },
+          h(TodoCreator, {
+            api,
+            projects,
+            busy,
+            onDirtyChange: setTodoDirty,
+            onDone: () => { setTodoDirty(false); setAdding(false); },
+          }),
           h(TemplatesList, { api, busy }),
+          // 放最后但用 order:-1 视觉置顶：子节点位置稳定，重渲染不会让 TodoCreator 换位丢草稿
+          confirmTodoClose
+            ? h(
+                'div',
+                { className: 'aw-modal-confirm' },
+                h('span', null, '已填写的内容尚未保存，确认放弃填写？'),
+                h(
+                  Btn,
+                  {
+                    small: true,
+                    tone: 'danger',
+                    onClick: () => { setConfirmTodoClose(false); setTodoDirty(false); setAdding(false); },
+                  },
+                  '放弃填写',
+                ),
+                h(Btn, { small: true, tone: 'ghost', onClick: () => setConfirmTodoClose(false) }, '继续填写'),
+              )
+            : null,
         ),
 
         h(TodoEditor, { api, todo: editing, projects, busy, onClose: () => setEditing(null) }),
@@ -1719,7 +1783,11 @@ const CSS = `
         monthDays: '',
         rollover: 'inherit',
       });
-      const set = (patch) => setDraft({ ...draft, ...patch });
+      const set = (patch) => {
+        setDraft({ ...draft, ...patch });
+        // 任何一次编辑都算「已填写」；提交成功 / 放弃填写时由上层清零
+        if (props.onDirtyChange) props.onDirtyChange(true);
+      };
 
       const submit = () => {
         const repeat = draft.repeatOn
@@ -1754,31 +1822,41 @@ const CSS = `
 
       return h(
         'div',
-        { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
+        { className: 'aw-form-vertical' },
         h(
-          'div',
-          { className: 'aw-form' },
+          Field,
+          { label: '待办标题' },
           h('input', {
             className: 'aw-input',
-            style: { flex: '1 1 240px' },
             placeholder: '待办标题',
             value: draft.title,
             onChange: (event) => set({ title: event.target.value }),
           }),
+        ),
+        h(
+          Field,
+          { label: '所属项目' },
           h(
             'select',
             { className: 'aw-select', value: draft.projectId, onChange: (event) => set({ projectId: event.target.value }) },
             h('option', { value: '' }, '无项目'),
             (props.projects || []).map((project) => h('option', { key: project.id, value: project.id }, `${project.emoji}${project.name}`)),
           ),
+        ),
+        h(
+          Field,
+          { label: '优先级' },
           h(
             'select',
             { className: 'aw-select', value: draft.priority, title: PRIORITY_TIP, onChange: (event) => set({ priority: event.target.value }) },
             PRIORITIES.map((value) => h('option', { key: value, value }, `${value} · ${PRIORITY_INFO[value].short}`)),
           ),
+        ),
+        h(
+          Field,
+          { label: '预估工时' },
           h('input', {
             className: 'aw-input',
-            style: { width: 96 },
             type: 'number',
             min: 0,
             max: 24,
@@ -1787,6 +1865,10 @@ const CSS = `
             value: draft.estimateHours,
             onChange: (event) => set({ estimateHours: event.target.value }),
           }),
+        ),
+        h(
+          Field,
+          { label: '计划日期' },
           h('input', {
             className: 'aw-input',
             type: 'date',
@@ -1795,16 +1877,20 @@ const CSS = `
           }),
         ),
         h(
-          'div',
-          { className: 'aw-form' },
+          Field,
+          { label: '重复任务' },
           h(
             'label',
             { className: 'aw-split-row', style: { gap: 6, fontSize: 12.5, fontWeight: 600 } },
             h('input', { className: 'aw-check', type: 'checkbox', checked: draft.repeatOn, onChange: (event) => set({ repeatOn: event.target.checked }) }),
-            '重复任务',
+            '开启',
           ),
-          draft.repeatOn
-            ? h(
+        ),
+        draft.repeatOn
+          ? h(
+              Field,
+              { label: '重复频率' },
+              h(
                 'select',
                 { className: 'aw-select', value: draft.freq, onChange: (event) => set({ freq: event.target.value }) },
                 h('option', { value: 'daily' }, '每天'),
@@ -1812,12 +1898,16 @@ const CSS = `
                 h('option', { value: 'weekdays' }, '周一至周五'),
                 h('option', { value: 'weekly' }, '每周指定几天'),
                 h('option', { value: 'monthly' }, '每月指定几号'),
-              )
-            : null,
-          draft.repeatOn && draft.freq === 'weekly'
-            ? h(
-                'span',
-                { className: 'aw-split-row' },
+              ),
+            )
+          : null,
+        draft.repeatOn && draft.freq === 'weekly'
+          ? h(
+              Field,
+              { label: '每周几' },
+              h(
+                'div',
+                { className: 'aw-weekdays' },
                 WEEKDAYS.map((name, index) =>
                   h(Btn,
                     {
@@ -1830,17 +1920,24 @@ const CSS = `
                     name,
                   ),
                 ),
-              )
-            : null,
-          draft.repeatOn && draft.freq === 'monthly'
-            ? h('input', {
+              ),
+            )
+          : null,
+        draft.repeatOn && draft.freq === 'monthly'
+          ? h(
+              Field,
+              { label: '每月几号' },
+              h('input', {
                 className: 'aw-input',
-                style: { width: 170 },
                 placeholder: '几号，如 1,15',
                 value: draft.monthDays,
                 onChange: (event) => set({ monthDays: event.target.value }),
-              })
-            : null,
+              }),
+            )
+          : null,
+        h(
+          Field,
+          { label: '顺延策略' },
           h(
             'select',
             { className: 'aw-select', value: draft.rollover, onChange: (event) => set({ rollover: event.target.value }), title: '没做完怎么办' },
@@ -1849,9 +1946,13 @@ const CSS = `
             h('option', { value: 'backlog' }, '顺延进积压'),
             h('option', { value: 'never' }, '到期作废'),
           ),
-          h(Btn, { tone: 'primary', disabled: busy || !draft.title.trim(), onClick: submit }, '新建'),
-          h('span', { className: 'aw-note', title: PRIORITY_TIP }, `优先级：${PRIORITY_LEGEND}`),
         ),
+        h(
+          'div',
+          { className: 'aw-submit-wrap' },
+          h(Btn, { tone: 'primary', disabled: busy || !draft.title.trim(), onClick: submit }, '新建'),
+        ),
+        h('span', { className: 'aw-note', title: PRIORITY_TIP }, `优先级：${PRIORITY_LEGEND}`),
       );
     }
 
@@ -3568,7 +3669,6 @@ const CSS = `
                 { className: 'aw-note', style: { textAlign: 'center', paddingTop: 10 } },
                 snap.loading ? '加载中…' : '工作台账 · 数据全部保存在本机 ~/ai-workbench/state.json',
               ),
-
             ),
           ),
         ),
