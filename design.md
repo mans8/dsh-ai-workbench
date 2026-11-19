@@ -140,22 +140,25 @@ padding: 22px 24px;
 
 **一个分页里的卡片数量控制在 1–4 张。** 超过 4 张说明该合并成一张卡里的分节（`.aw-sec` + `border-top` 细线）。
 
+分节 `.aw-sec` 内边距 **12px 20px**，节头与内容之间 **6px**；首节顶部 **16px**。节内不放卡片阴影，只靠一条细线分隔。
+
 ### 4.2 统计卡 `.aw-metric`
 
 ```
 ┌──────────────────────────────┐
-│ ⬤  本周完成                   │   ⬤ = 48px 圆底图标块（--accent-soft 底 / --accent 图标）
+│ ⬤  本周完成                   │   ⬤ = 40px 圆底图标块（--accent-soft 底 / --accent 图标）
 │    0 项                       │   数字 24px/600，标签 12px muted
 └──────────────────────────────┘
 ```
 
-- 一排用 `.aw-metrics`：`grid-template-columns:repeat(auto-fit,minmax(186px,1fr))`
+- 一排用 `.aw-metrics`：`grid-template-columns:repeat(auto-fit,minmax(168px,1fr))`，卡高约 67px
+- **今日页不再重复「今日待办」卡**：那个数字就是 `.aw-dayhead` 里唯一的大数字，顺延数量写在日期下面
 - **每张卡必须有图标**。不给 `icon` 就由 `iconForLabel()` 按标签猜（完成/逾期/草稿/积压）
 - 标签**不要 `white-space:nowrap`**（会把栅格撑破），靠 `text-overflow:ellipsis` 收
 
 ### 4.3 台账行 `.aw-row`
 
-- 行高 46px，内边距 `10px`，行与行之间只有 1px `--rule` 细线，**不要逐行卡片**
+- 行高 40px，内边距 `4px 8px`，行与行之间只有 1px `--rule` 细线，**不要逐行卡片**
 - 悬停：`background: color-mix(in srgb, var(--accent) 5%, transparent)`
 - 标题吃满剩余宽度（`flex:1 1 auto` + 省略号），元信息与操作靠右
 - 已完成：标题转 `--muted`，前缀一个 `--ok` 实心圆角方块打勾
@@ -167,6 +170,7 @@ padding: 22px 24px;
 | 主按钮 `.aw-btn.is-primary` | 靛蓝实心 + 白字，胶囊，38px |
 | 次按钮 `.aw-btn` | **白底 + 柔阴影**，胶囊；不是描边 |
 | 幽灵 `.aw-btn.is-ghost` | 透明无阴影，用于「设置」「取消」 |
+| 小按钮 `.aw-btn.is-small` | 32px 高、12px 字号（app 控件的地板）；台账行内动作、节头「新增」用它 |
 | 输入/下拉 `.aw-input/.aw-select` | **16px 圆角**（不是胶囊），38px，`1px solid var(--field-line)`，白底，焦点靛蓝描边 |
 | 图标按钮 `.aw-icon-btn` | 30×30 圆形，透明底，悬停 `--paper-3` |
 | 徽标 `.aw-chip` | 胶囊 24px，`--paper-3` 底；语义色用深版文字 |
@@ -280,4 +284,4 @@ node ../.dsh/skills/hallmark/scripts/sloplint.mjs \
 
 界面版本号在 `client.js` 的 `BUILD`，**每次改 UI 都要 +1**，并在设置弹层底部可见——用来确认 DSH 到底加载了哪一版。
 
-当前：`v5.0 · 2026-11-17`
+当前：`v1.0.1 · 2026-11-20`（今日页密度收紧：统计卡 67px、台账行 40px、页头 28px）

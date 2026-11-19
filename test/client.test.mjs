@@ -1863,9 +1863,9 @@ group('3d. 待办行的排版约束（一行放下 + 边框可见）');
     assert.ok(!/#[0-9a-fA-F]{3,6}\b/.test(body.split('.aw-page[data-skin="dusk"]')[0]), '皮肤块外面不该有十六进制颜色');
   });
 
-  check('行高 46px（Horizon 的行距）', () => {
-    assert.match(css, /^\.aw-row\{[^}]*min-height:46px/m);
-    assert.match(css, /^\.aw-row\{[^}]*padding:10px 10px/m);
+  check('行高 40px（紧凑台账行距）', () => {
+    assert.match(css, /^\.aw-row\{[^}]*min-height:40px/m);
+    assert.match(css, /^\.aw-row\{[^}]*padding:4px 8px/m);
   });
 
   check('标题吃满剩余宽度、元信息与操作靠右，右侧不留空白', () => {

@@ -43,7 +43,7 @@ window.__ModuleLoader__.load({
     };
 
     /** 构建标记：设置弹层底部会显示，用来确认 DSH 到底加载了哪一版。 */
-    const BUILD = 'v1.0.0 · 2026-11-19';
+    const BUILD = 'v1.0.1 · 2026-11-20';
 
     /** 每个分页的页标题（对应参考稿里的「Main Dashboard」）。 */
     const TAB_TITLE = { today: '今天', projects: '项目', reports: '报表', stats: '统计' };
@@ -125,7 +125,7 @@ const CSS = `
  * paper: #F4F7FE 淡紫灰 · card: #FFFFFF · ink: #1B2559 海军蓝 · muted: #A3AED0 · accent: #4318FF 靛蓝 · accent-2: #6AD2FF 浅青
  * nav: 左侧 rail，选中=靛蓝文字 + 图标 + 右缘 3px 指示条 · signature: 白卡台账（20px 圆角 + 极柔阴影）· states: full, empty, loading, error
  * axes: horizon/indigo-cyan/white-card · posture: committed · contrast: pass · skins: horizon(默认), lido, dusk, jade · v5.0.0
- * build: v1.0.0 · A52 设置改回弹窗（面板唯一框，一行一项，分组，删除单列）· A51 曾改整页 · A50 描边照抄 · A49 Pixso 校准 · A47 design.md 契约
+ * build: v1.0.1 · A54 今日页密度收紧（统计卡 67px / 台账行 40px / 页头 32px，去掉重复的「今日待办」卡）· A53 新增待办弹层 · A52 设置改回弹窗（面板唯一框，一行一项，分组，删除单列）· A51 曾改整页 · A50 描边照抄 · A49 Pixso 校准 · A47 design.md 契约
  * sweep: 4 FAIL (gate 40, 输入框描边 1.26:1) — 用户明确要求照抄参考稿的 #E0E5F2，属有意偏离，非漏改
  * 其余 0 REFLEX · 0 WARN (app scope, 20 route×skin) · copy: verbatim · 可读性由「字段上方标签 + 占位符」承担
  * 与参考的偏差：参考用紫蓝渐变做「Upgrade to PRO」卡与柱图，这里一律用实色靛蓝（Hallmark 2a 禁紫蓝渐变） */
@@ -237,7 +237,7 @@ const CSS = `
 .aw-promo-note{font-size:11.5px;opacity:.9;display:flex;justify-content:space-between;gap:8px}
 
 .aw-main{flex:1 1 auto;min-width:0;min-height:0;display:flex;flex-direction:column}
-.aw-inner{flex:1 1 auto;min-height:0;overflow-y:auto;width:100%;max-width:1180px;padding:26px 28px 72px;display:flex;flex-direction:column;gap:20px}
+.aw-inner{flex:1 1 auto;min-height:0;overflow-y:auto;width:100%;max-width:1180px;padding:20px 24px 48px;display:flex;flex-direction:column;gap:16px}
 @media (max-width:1080px){
   .aw-shell{flex-direction:column}
   .aw-rail{flex:0 0 auto;flex-direction:row;align-items:center;gap:8px;padding:12px 16px;overflow-x:auto;
@@ -249,12 +249,12 @@ const CSS = `
   .aw-tab.is-on{background:var(--accent);color:var(--on-accent)}
   .aw-tab.is-on::after{display:none}
   .aw-promo{display:none}
-  .aw-inner{padding:18px 16px 56px;gap:16px}
+  .aw-inner{padding:14px 16px 40px;gap:12px}
 }
 
 /* ── 页头：面包屑 + 标题 + 动作 ────────────────────────────── */
 .aw-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;padding:0}
-.aw-crumb{font-size:11.5px;color:var(--muted);margin-bottom:6px}
+.aw-crumb{font-size:11.5px;color:var(--muted);margin-bottom:2px}
 .aw-title{display:flex;align-items:center;gap:10px;font-size:var(--fs-head);font-weight:600;letter-spacing:-.02em;line-height:1.15;color:var(--ink)}
 .aw-title small{font-size:12.5px;font-weight:400;color:var(--muted);letter-spacing:0;padding-left:10px;border-left:1px solid var(--rule-2)}
 .aw-ledger{font-size:12.5px;color:var(--muted);display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px}
@@ -263,10 +263,10 @@ const CSS = `
 .aw-ledger .is-danger{color:var(--danger);font-weight:500}
 
 /* ── 首屏 ───────────────────────────────────────────────────── */
-.aw-dayhead{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:8px 24px;padding:2px 0}
+.aw-dayhead{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:4px 24px;padding:0}
 @media (max-width:700px){.aw-dayhead{grid-template-columns:minmax(0,1fr)}}
 .aw-dayhead-date{font-size:var(--fs-display);font-weight:600;letter-spacing:-.025em;line-height:1.1;color:var(--ink);margin:0}
-.aw-dayhead-week{font-size:var(--fs-meta);color:var(--muted);margin-top:6px;display:flex;gap:14px;flex-wrap:wrap}
+.aw-dayhead-week{font-size:var(--fs-meta);color:var(--muted);margin-top:4px;display:flex;gap:12px;flex-wrap:wrap}
 .aw-dayhead-fig{display:flex;align-items:baseline;gap:12px;justify-self:end}
 @media (max-width:700px){.aw-dayhead-fig{justify-self:start}}
 .aw-dayhead-num{font-size:var(--fs-display);font-weight:600;letter-spacing:-.03em;line-height:1;color:var(--accent)}
@@ -275,21 +275,21 @@ const CSS = `
 .aw-caption .num{color:var(--ink);font-weight:600}
 .aw-caption .is-danger{color:var(--danger);font-weight:600}
 .aw-caption .is-warn{color:var(--warn);font-weight:600}
-.aw-daybar{grid-column:1/-1;height:8px;border-radius:999px;background:var(--paper-3);overflow:hidden;margin-top:10px}
+.aw-daybar{grid-column:1/-1;height:8px;border-radius:999px;background:var(--paper-3);overflow:hidden;margin-top:8px}
 .aw-daybar>i{display:block;height:100%;border-radius:999px;background:var(--accent);transition:width 220ms linear}
 
 /* ── 卡片：白底 + 20px 圆角 + 极柔阴影 ─────────────────────── */
 .aw-board,.aw-card{background:var(--paper-2);border:0;border-radius:var(--r-card);box-shadow:var(--shadow-soft);position:relative}
 .aw-board{box-shadow:var(--shadow);overflow:hidden}
 .aw-card{padding:22px 24px}
-.aw-sec{border-top:1px solid var(--rule);padding:18px 24px 20px}
-.aw-sec.is-first{border-top:0;padding-top:22px}
-.aw-sec-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+.aw-sec{border-top:1px solid var(--rule);padding:12px 20px 12px}
+.aw-sec.is-first{border-top:0;padding-top:16px}
+.aw-sec-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:6px;flex-wrap:wrap}
 .aw-sec-title{font-size:var(--fs-title);font-weight:600;color:var(--ink);display:inline-flex;align-items:baseline;gap:8px;min-width:0;letter-spacing:-.01em}
 .aw-sec-title b{color:var(--ink);font-size:var(--fs-meta);font-weight:600;background:var(--paper-3);border-radius:999px;padding:1px 9px}
 .aw-sec-title .aw-note{font-weight:400}
 .aw-sec-extra{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;font-size:var(--fs-caption);color:var(--muted)}
-.aw-sec-body{display:flex;flex-direction:column;gap:10px}
+.aw-sec-body{display:flex;flex-direction:column;gap:8px}
 .aw-card-title{font-size:var(--fs-title);font-weight:600;color:var(--ink);display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap;letter-spacing:-.01em}
 .aw-card-title b{color:var(--ink);font-size:var(--fs-meta);font-weight:600;background:var(--paper-3);border-radius:999px;padding:1px 9px}
 .aw-grid{display:grid;gap:18px;grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}
@@ -298,11 +298,11 @@ const CSS = `
 /* ── 台账行 ─────────────────────────────────────────────────── */
 .aw-list{display:flex;flex-direction:column}
 .aw-list>.aw-row+.aw-row{border-top:1px solid var(--rule)}
-.aw-row{display:flex;align-items:center;gap:12px;padding:10px 10px;min-height:46px;border-radius:var(--r-inner);overflow:hidden;transition:background 120ms linear}
+.aw-row{display:flex;align-items:center;gap:10px;padding:4px 8px;min-height:40px;border-radius:var(--r-inner);overflow:hidden;transition:background 120ms linear}
 .aw-row:hover{background:color-mix(in srgb,var(--accent) 5%,transparent)}
 .aw-row-title{font-weight:500;font-size:var(--fs-body);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto;min-width:0;line-height:var(--lh-tight);color:var(--ink)}
 .aw-row-main{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:12px}
-.aw-row-meta{display:flex;align-items:center;gap:12px;font-size:var(--fs-caption);color:var(--muted);flex:0 1 auto;min-width:0;white-space:nowrap}
+.aw-row-meta{display:flex;align-items:center;gap:10px;font-size:var(--fs-caption);color:var(--muted);flex:0 1 auto;min-width:0;white-space:nowrap}
 .aw-row-main>.aw-row-meta{justify-content:flex-end}
 .aw-row-acts{display:flex;align-items:center;gap:2px;flex-shrink:0}
 .aw-row.is-done .aw-row-title{color:var(--muted)}
@@ -322,22 +322,22 @@ const CSS = `
 .aw-dot{width:7px;height:7px;border-radius:999px;flex:0 0 auto;display:inline-block;background:var(--accent-2)}
 .aw-spacer{flex:1 1 auto}
 .aw-split-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.aw-empty{padding:36px 20px;text-align:center;color:var(--muted);font-size:var(--fs-meta)}
+.aw-empty{padding:24px 20px;text-align:center;color:var(--muted);font-size:var(--fs-meta)}
 
 /* ── 统计卡：白底小卡，数字大 ───────────────────────────────── */
-.aw-metrics{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(186px,1fr))}
-.aw-metric{background:var(--paper-2);border-radius:var(--r-card);box-shadow:var(--shadow-soft);padding:16px 18px;
+.aw-metrics{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(168px,1fr))}
+.aw-metric{background:var(--paper-2);border-radius:var(--r-card);box-shadow:var(--shadow-soft);padding:12px 16px;
   display:flex;align-items:center;gap:12px;min-width:0}
-.aw-metric-tile{flex:0 0 auto;width:48px;height:48px;border-radius:999px;background:var(--accent-soft);color:var(--accent);
+.aw-metric-tile{flex:0 0 auto;width:40px;height:40px;border-radius:999px;background:var(--accent-soft);color:var(--accent);
   display:inline-flex;align-items:center;justify-content:center}
 .aw-metric.is-danger .aw-metric-tile{background:color-mix(in srgb,var(--danger) 12%,var(--paper-2));color:var(--danger)}
 .aw-metric-body{min-width:0}
 .aw-metric-label{font-size:var(--fs-caption);color:var(--muted);font-weight:400;overflow:hidden;text-overflow:ellipsis;line-height:1.3}
-.aw-metric-value{font-size:var(--fs-figure);font-weight:600;letter-spacing:-.025em;line-height:1.2;margin-top:2px;white-space:nowrap;color:var(--ink)}
+.aw-metric-value{font-size:var(--fs-figure);font-weight:600;letter-spacing:-.025em;line-height:1.15;margin-top:0;white-space:nowrap;color:var(--ink)}
 .aw-metric-value small{font-size:var(--fs-caption);font-weight:500;color:var(--muted);margin-left:3px;letter-spacing:0}
 .aw-metric.is-danger .aw-metric-value{color:var(--danger)}
 .aw-metric.is-ok .aw-metric-value{color:var(--accent)}
-@media (max-width:760px){.aw-metrics{gap:12px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}.aw-metric{padding:14px 16px}.aw-metric-tile{display:none}}
+@media (max-width:760px){.aw-metrics{gap:12px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}.aw-metric{padding:12px 14px}.aw-metric-tile{display:none}}
 
 /* ── 控件 ───────────────────────────────────────────────────── */
 .aw-btn{appearance:none;cursor:pointer;font:inherit;font-size:var(--fs-meta);font-weight:600;height:var(--ctl-h);padding:0 18px;
@@ -355,7 +355,7 @@ const CSS = `
 .aw-btn.is-danger:hover:not(:disabled){background:color-mix(in srgb,var(--danger) 8%,transparent)}
 .aw-btn.is-gold{background:transparent;color:var(--warn);box-shadow:none}
 .aw-btn.is-on{background:var(--accent);color:var(--on-accent);box-shadow:none}
-.aw-btn.is-small{height:32px;padding:0 14px;font-size:var(--fs-caption);font-weight:600}
+.aw-btn.is-small{height:32px;padding:0 12px;font-size:var(--fs-caption);font-weight:600}
 
 .aw-input,.aw-select,.aw-textarea{font:inherit;font-size:var(--fs-body);letter-spacing:-.02em;height:var(--ctl-h);padding:0 24px;border-radius:var(--r-input);
   border:1px solid var(--field-line);background:var(--paper-2);color:var(--ink);min-width:0;
@@ -426,9 +426,9 @@ const CSS = `
 .aw-chip.is-gold{background:color-mix(in srgb,var(--warn) 14%,var(--paper-2));color:color-mix(in oklab,var(--warn) 58%,var(--ink))}
 .aw-chips{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 
-.aw-fold{margin-top:8px;border-top:1px solid var(--rule);padding-top:10px}
+.aw-fold{margin-top:8px;border-top:1px solid var(--rule);padding-top:8px}
 .aw-fold-head{appearance:none;border:0;background:transparent;font:inherit;font-size:var(--fs-meta);font-weight:500;color:var(--muted);
-  cursor:pointer;display:flex;align-items:center;justify-content:space-between;width:100%;min-height:var(--ctl-h);padding:0;gap:8px}
+  cursor:pointer;display:flex;align-items:center;justify-content:space-between;width:100%;min-height:36px;padding:0;gap:8px}
 .aw-fold-head:hover{color:var(--ink)}
 .aw-fold-head:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 
@@ -1062,13 +1062,6 @@ const CSS = `
           icon: 'alert',
           tone: view.stats.overdueCount > 0 ? 'danger' : undefined,
         },
-        {
-          label: '今日待办',
-          value: String(view.stats.plannedCount),
-          unit: '项',
-          hint: view.stats.carriedCount > 0 ? `其中顺延 ${view.stats.carriedCount}` : null,
-          icon: 'backlog',
-        },
         boot && boot.counts.draftReports > 0
           ? { label: '待归档草稿', value: String(boot.counts.draftReports), unit: '份', icon: 'draft' }
           : { label: '积压', value: String(view.stats.backlogCount), unit: '项', icon: 'backlog' },
@@ -1099,6 +1092,8 @@ const CSS = `
               'div',
               { className: 'aw-dayhead-week' },
               h('span', null, view.weekLabel),
+              // 顺延数字贴在这天旁边：它解释「今日待办 N」里有多少是昨天推过来的
+              view.stats.carriedCount > 0 ? h('span', null, `顺延 ${view.stats.carriedCount} 项`) : null,
               banner.filter((item) => !(item.level === 'danger' && /项已逾期/.test(item.text))).length > 0
                 ? h(
                     'span',
@@ -3095,7 +3090,7 @@ const CSS = `
                 h(
                   'div',
                   { className: 'aw-split-row' },
-                  h('button', { type: 'button', className: 'aw-btn is-ghost', onClick: () => setSettingsOpen(true), title: '设置' }, '设置'),
+                  h('button', { type: 'button', className: 'aw-btn is-ghost is-small', onClick: () => setSettingsOpen(true), title: '设置' }, '设置'),
                 ),
               ),
 
@@ -3115,7 +3110,7 @@ const CSS = `
 
               h(
                 'div',
-                { className: 'aw-note', style: { textAlign: 'center', paddingTop: 10 } },
+                { className: 'aw-note', style: { textAlign: 'center', paddingTop: 6 } },
                 snap.loading ? '加载中…' : '工作台账 · 数据全部保存在本机 ~/ai-workbench/state.json',
               ),
             ),
