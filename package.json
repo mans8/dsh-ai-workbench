@@ -1,0 +1,70 @@
+{
+  "name": "dsh-ai-workbench",
+  "version": "1.0.0",
+  "description": "AI 工作台账（AI Workbench）：DSH 个人工作台账插件 —— 待办跨日顺延、按法定工作日核算工时、周报/月报/年报从真实流水生成并归档。数据全部留在本机。",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "todo",
+    "timesheet",
+    "weekly-report"
+  ],
+  "license": "MIT",
+  "author": "gibson.huang",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": {
+      "default": "./index.js"
+    },
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib/",
+    "data/",
+    "icon.svg",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mans8/dsh-ai-workbench.git"
+  },
+  "homepage": "https://github.com/mans8/dsh-ai-workbench#readme",
+  "bugs": {
+    "url": "https://github.com/mans8/dsh-ai-workbench/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "node test/host.test.mjs && node test/client.test.mjs",
+    "test:host": "node test/host.test.mjs",
+    "test:client": "node test/client.test.mjs",
+    "prepublishOnly": "npm test"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "puppeteer-core": "^25.17.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}

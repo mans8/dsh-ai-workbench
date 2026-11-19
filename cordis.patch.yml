@@ -1,0 +1,16 @@
+# AI 工作台账（dsh-ai-workbench）bundle 补丁：插入 Host 行。
+# 同一个包的 Client 半体由 package.json 的 dsh.client 声明，无需额外的行。
+#
+# config 只在**首次**创建 state.json 时种入默认值，之后以面板/工具里的修改为准，
+# 所以改这里不会覆盖你已经调好的设置。
+- insert:
+    - id: ai-workbench
+      name: 'dsh-ai-workbench'
+      config:
+        dailyHours: 7.5                        # 每个法定工作日的小时数
+        grade: standard                        # 职级标识
+        gradeLabel: 标准                       # 职级名称（仅展示，可在设置里改）
+        gradeFactor: 1.1                       # 必须工时 = 计划工时 × 该系数
+        # 额外放假 / 特殊作息可在这里或面板里加：
+        # holidayOverrides:
+        #   "2027-02-08": holiday

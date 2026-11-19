@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>AI 工作台账 · 本地复现</title>
+<style>
+  :root{
+    --dsw-alias-bg-base:#ffffff; --dsw-alias-bg-layer-1:#f6f8fa; --dsw-alias-bg-layer-2:#eef1f4;
+    --dsw-alias-border-l1:#dfe3e8; --dsw-alias-border-l2:#c7cdd4;
+    --dsw-alias-label-primary:#1b1f24; --dsw-alias-label-secondary:#606a76;
+    --dsw-alias-brand-primary:#2E7D6F;
+    --dsw-alias-state-success-primary:#1F7A4D; --dsw-alias-state-error-primary:#C0392B;
+  }
+  html,body,#root{height:100%;margin:0}
+  body{font-family:-apple-system,"PingFang SC",sans-serif}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+  // DSH 外壳会先装好 ModuleLoader；这里补齐同样的前置条件。
+  window.__ModuleLoader__ = { load(def) { window.__captured = def; } };
+</script>
+<script src="/ai-workbench-client.js"></script>
+<script src="/bundle.js"></script>
+</body>
+</html>

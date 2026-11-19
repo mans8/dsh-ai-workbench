@@ -1,0 +1,2123 @@
+/**
+ * AI 工作台账 — Client 半体渲染测试。
+ *
+ * 思路：用一个 ~120 行的 mini-React 垫片真正执行 client.js 里的组件树
+ * （createElement / useState / useEffect 都实现），配上从**真实 Host** 抓下来的
+ * 视图 JSON，把六个分页各渲染一遍。
+ *
+ * 这样能在不装 DSH、不开浏览器的情况下抓到绝大多数 UI 运行时错误：
+ * 读空值、调用不存在的字段、组件签名不匹配、hook 顺序问题等等。
+ *
+ * 运行：node test/client.test.mjs
+ */
+import assert from 'node:assert/strict';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = fileURLToPath(new URL('.', import.meta.url));
+const PLUGIN_DIR = join(HERE, '..');
+const ROOT = mkdtempSync(join(tmpdir(), 'aiwb-client-'));
+
+let passed = 0;
+const failures = [];
+
+function check(label, fn) {
+  try {
+    const result = fn();
+    if (result && typeof result.then === 'function') {
+      throw new Error('这个用例是 async 的，必须用 await checkAsync(...) 包起来，否则断言不会被执行');
+    }
+    passed += 1;
+    console.log(`  ✓ ${label}`);
+  } catch (error) {
+    failures.push({ label, error });
+    console.log(`  ✗ ${label}\n      ${String(error.message).split('\n').join('\n      ')}`);
+  }
+}
+
+async function checkAsync(label, fn) {
+  try {
+    await fn();
+    passed += 1;
+    console.log(`  ✓ ${label}`);
+  } catch (error) {
+    failures.push({ label, error });
+    console.log(`  ✗ ${label}\n      ${String(error.message).split('\n').join('\n      ')}`);
+  }
+}
+
+/** 从渲染树里取出样式表文本（style 子节点或 dangerouslySetInnerHTML 两种写法都认）。 */
+function cssOf(tree) {
+  return (function find(node) {
+    if (!node) return null;
+    if (node.type === 'style') {
+      const inner = node.props && node.props.dangerouslySetInnerHTML;
+      if (inner && typeof inner.__html === 'string') return inner.__html;
+      return (node.children || []).map((c) => c.text || '').join('');
+    }
+    for (const child of node.children || []) {
+      const hit = find(child);
+      if (hit) return hit;
+    }
+    return null;
+  })(tree) || '';
+}
+
+function group(title) {
+  console.log(`\n${title}`);
+}
+
+/* ================================================================== *
+ * 1. mini-React：够用的 createElement / useState / useEffect
+ * ================================================================== */
+
+function createMiniReact() {
+  const instances = new Map();
+  const overrides = {};
+  const pendingEffects = [];
+  let currentPath = '';
+  let currentName = '';
+  let hookIndex = 0;
+
+  const isFn = (value) => typeof value === 'function';
+  const isHost = (value) => typeof value === 'string';
+
+  function createElement(type, props, ...children) {
+    const flat = [];
+    const push = (child) => {
+      if (Array.isArray(child)) child.forEach(push);
+      else if (child === null || child === undefined || typeof child === 'boolean') return;
+      else flat.push(child);
+    };
+    children.forEach(push);
+    // 与 React 一致：没有传可变子元素时，保留 props.children（显式 children 属性）。
+    const next = { ...(props || {}) };
+    if (flat.length === 1) next.children = flat[0];
+    else if (flat.length > 1) next.children = flat;
+    return { __el: true, type, props: next };
+  }
+
+  function instanceOf(path) {
+    if (!instances.has(path)) instances.set(path, { hooks: [], deps: {}, renders: 0 });
+    return instances.get(path);
+  }
+
+  function useState(initial) {
+    const inst = instanceOf(currentPath);
+    const index = hookIndex++;
+    if (!(index in inst.hooks)) {
+      const preset = overrides[currentName];
+      inst.hooks[index] = preset && index in preset
+        ? preset[index]
+        : isFn(initial)
+          ? initial()
+          : initial;
+    }
+    const setter = (next) => {
+      inst.hooks[index] = isFn(next) ? next(inst.hooks[index]) : next;
+    };
+    return [inst.hooks[index], setter];
+  }
+
+  function useEffect(fn, deps) {
+    const inst = instanceOf(currentPath);
+    const index = hookIndex++;
+    const key = `e${index}`;
+    const prev = inst.deps[key];
+    const changed = !prev || !deps || prev.length !== deps.length || deps.some((dep, i) => dep !== prev[i]);
+    if (changed) {
+      inst.deps[key] = deps ? deps.slice() : null;
+      pendingEffects.push(fn);
+    }
+  }
+
+  /** 深度优先渲染，返回一棵 {type, props, children, text} 的简化树。 */
+  function renderNode(node, path) {
+    if (node === null || node === undefined || typeof node === 'boolean') return null;
+    if (typeof node === 'string' || typeof node === 'number') return { type: '#text', text: String(node), children: [] };
+    if (Array.isArray(node)) {
+      return { type: '#frag', children: node.map((child, i) => renderNode(child, `${path}.${i}`)).filter(Boolean) };
+    }
+    if (!node.__el) return null;
+
+    const { type, props } = node;
+    if (isFn(type)) {
+      const savePath = currentPath;
+      const saveName = currentName;
+      const saveIndex = hookIndex;
+      currentPath = path;
+      currentName = type.name || 'anonymous';
+      hookIndex = 0;
+      instanceOf(path).renders += 1;
+      let output;
+      try {
+        output = type(props);
+      } finally {
+        currentPath = savePath;
+        currentName = saveName;
+        hookIndex = saveIndex;
+      }
+      return renderNode(output, `${path}~`);
+    }
+
+    if (isHost(type)) {
+      const kids = props.children;
+      const list = Array.isArray(kids) ? kids : kids === undefined || kids === null ? [] : [kids];
+      return {
+        type,
+        props,
+        children: list.map((child, i) => renderNode(child, `${path}/${i}`)).filter(Boolean),
+      };
+    }
+    return null;
+  }
+
+  return {
+    createElement,
+    useState,
+    useEffect,
+    useMemo: (fn) => fn(),
+    useCallback: (fn) => fn(),
+    useRef: (initial) => ({ current: initial }),
+    Fragment: '#fragment',
+    /**
+     * 预设某个组件第 N 个 useState 的初值（按 hook 下标索引，测试切分页 / 打开弹层用）。
+     * 注意 WorkPage 的前两个 hook 被 useSnapshot 占用，所以 tab 是下标 2。
+     */
+    presets(map) {
+      // 每次预设都当作一次全新的挂载：清掉 hook 状态，否则第二次渲染时
+      // 已存在的 useState 初值会盖过预设（同一路径的实例会被复用）。
+      instances.clear();
+      for (const key of Object.keys(overrides)) delete overrides[key];
+      Object.assign(overrides, map);
+    },
+    /** 渲染入口，返回简化树。 */
+    render(element) {
+      pendingEffects.length = 0;
+      const tree = renderNode(element, 'root');
+      const effectErrors = [];
+      for (const fn of pendingEffects.splice(0)) {
+        try {
+          fn();
+        } catch (error) {
+          effectErrors.push(error);
+        }
+      }
+      return { tree, effectErrors };
+    },
+    instanceCount: () => instances.size,
+  };
+}
+
+/** 把简化树里的文字收集出来，供断言使用。 */
+function textOf(node) {
+  if (!node) return '';
+  if (node.type === '#text') return node.text;
+  return (node.children || []).map(textOf).join(' ');
+}
+
+/**
+ * 收集树里所有 <button> 的可见文案。
+ *
+ * 这条断言来自一个真实事故：批量把「直接调用组件」改成 h(组件, ...) 时，
+ * 换行写法的调用（`Btn(` 后面换行再给 props）被漏掉了，于是那些按钮虽然渲染出来了，
+ * 但第二个参数（文案）被当成多余实参丢弃 —— 界面上只剩一个个空的小绿块。
+ * 所以：**任何 button 都不许没有文案**。
+ */
+function collectButtons(node, out = []) {
+  if (!node) return out;
+  if (node.type === 'button') {
+    // 图标按钮没有文字，但会有 aria-label —— 有可访问名字就不算空按钮
+    const text = textOf(node).replace(/\s+/g, ' ').trim();
+    const label = String(node.props?.['aria-label'] ?? node.props?.title ?? '').trim();
+    out.push(text || label);
+  }
+  for (const child of node.children || []) collectButtons(child, out);
+  return out;
+}
+
+/** 在渲染树里找第一个满足条件的节点。 */
+function findNode(node, predicate) {
+  if (!node) return null;
+  if (predicate(node)) return node;
+  for (const child of node.children || []) {
+    const hit = findNode(child, predicate);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** 统计某个子树里满足条件的节点数。 */
+function countIn(node, predicate) {
+  if (!node) return 0;
+  let n = predicate(node) ? 1 : 0;
+  for (const child of node.children || []) n += countIn(child, predicate);
+  return n;
+}
+
+/** 统计渲染出的元素数量（粗略的复杂度指标）。 */
+function sizeOf(node) {
+  if (!node) return 0;
+  return 1 + (node.children || []).reduce((sum, child) => sum + sizeOf(child), 0);
+}
+
+/* ================================================================== *
+ * 2. 从真实 Host 抓视图数据
+ * ================================================================== */
+
+function makeRes() {
+  return {
+    statusCode: 200,
+    headers: {},
+    body: null,
+    setHeader(key, value) {
+      this.headers[String(key).toLowerCase()] = value;
+    },
+    end(body) {
+      this.body = body ?? null;
+    },
+  };
+}
+
+function makeReq(method, url, body) {
+  const headers = body === undefined ? {} : { 'content-type': 'application/json' };
+  return {
+    method,
+    url,
+    headers,
+    resume() {},
+    async *[Symbol.asyncIterator]() {
+      if (body !== undefined) yield Buffer.from(JSON.stringify(body), 'utf8');
+    },
+  };
+}
+
+/** 起一个真实的 Host 实例并返回 { get, post }。 */
+async function bootHost(label, startClock = '2026-10-12') {
+  let clock = startClock;
+  process.env.AI_WORKBENCH_STATE_FILE = join(ROOT, label, 'state.json');
+  process.env.DSH_HOME = join(ROOT, label);
+  const routes = new Map();
+  const tools = new Map();
+  const ctx = {
+    effect: (fn) => fn(),
+    connection: { requestRejection: () => undefined },
+    webServer: {
+      register(route) {
+        routes.set(route.path, route);
+        return () => {};
+      },
+    },
+    tools: {
+      register(tool) {
+        tools.set(tool.name, tool);
+        return () => {};
+      },
+    },
+  };
+  const mod = await import(`${join(PLUGIN_DIR, 'index.js')}?v=${encodeURIComponent(label)}`);
+  mod.apply(ctx, {});
+  const route = routes.get('/ai-workbench/api');
+
+  async function call(method, url, body) {
+    const res = makeRes();
+    await route.handler(makeReq(method, url, body), res);
+    return JSON.parse(res.body);
+  }
+
+  return {
+    setClock: (value) => {
+      clock = value;
+    },
+    get: (view, params = {}) => call('GET', `/ai-workbench/api?${new URLSearchParams({ view, today: clock, ...params })}`),
+    post: (body) => call('POST', '/ai-workbench/api', { today: clock, ...body }),
+  };
+}
+
+/** 造一份有代表性的工作台账，然后把各视图抓下来。 */
+async function collectViews() {
+  // 先在 2026-10-09 建账，再拨到 10-12 —— 这样顺延、逾期、积压都是真实算出来的。
+  const host = await bootHost('client-fixture', '2026-10-09');
+  const order = (await host.post({ action: 'project_create', name: '订单中台', code: 'OMS', emoji: '📦', owner: '我' })).result.data.id;
+  const recon = (await host.post({ action: 'project_create', name: '对账系统', code: 'REC', emoji: '🧾' })).result.data.id;
+
+  await host.post({ action: 'todo_create', title: '订单导出接口重构', project: '订单中台', plannedDate: '2026-10-05', estimateHours: 8, priority: 'P1', tags: ['重构'] });
+  await host.post({ action: 'todo_create', title: '支付回调幂等性改造', project: '订单中台', plannedDate: '2026-10-06', estimateHours: 6, priority: 'P0' });
+  await host.post({ action: 'todo_create', title: '对账系统灰度方案设计', project: '对账系统', plannedDate: '2026-10-07', estimateHours: 6, dueDate: '2026-10-09' });
+  await host.post({ action: 'todo_create', title: '整理接口文档', plannedDate: '2026-10-12', estimateHours: 2, progress: 40 });
+  await host.post({ action: 'todo_create', title: '背单词', plannedDate: '2026-10-11', rollover: 'backlog' });
+  await host.post({ action: 'todo_create', title: '与产品对齐导出字段', plannedDate: '2026-10-12' });
+
+  await host.post({ action: 'todo_complete', task: '订单导出接口重构', date: '2026-10-05', note: 'QPS 从 120 提到 900' });
+  await host.post({ action: 'todo_complete', task: '支付回调幂等性改造', date: '2026-10-06' });
+  await host.post({ action: 'log_note', title: '梳理导出字段口径', date: '2026-10-07', project: '订单中台' });
+  // 今天完成一件 —— 「本周完成」需要本周内的记录
+  await host.post({ action: 'todo_complete', task: '与产品对齐导出字段', date: '2026-10-12' });
+
+  // ── 拨到今天 ──
+  host.setClock('2026-10-12');
+
+  await host.post({ action: 'todo_create', title: '每日站会', repeat: { freq: 'workdays' }, estimateHours: 0.5, priority: 'P2' });
+  await host.post({ action: 'todo_create', title: '周一复盘', repeat: { freq: 'weekly', weekdays: [1] }, estimateHours: 1 });
+
+  // 工时只能由工单产生
+  await host.post({ action: 'ticket_add', date: '2026-10-08', hours: 7.5, project: '订单中台', title: '联调' });
+  await host.post({ action: 'ticket_add', date: '2026-10-09', hours: 6, title: '写文档' });
+  await host.post({ action: 'ticket_add', date: '2026-10-10', hours: 8, project: '对账系统', title: '调休加班' });
+  await host.post({ action: 'hours_mark', date: '2026-10-13', status: 'leave', note: '年假' });
+  await host.post({ action: 'ticket_add', date: '2026-10-11', hours: 2, title: '周末补一点' });
+  await host.post({ action: 'ticket_add', date: '2026-10-12', hours: 5, title: '月底统一填' });
+  await host.post({ action: 'ticket_add', title: '密评整改相关优化', project: '订单中台', url: 'https://issuetrack.example.com/issues/10001', date: '2026-10-13', hours: null });
+  await host.post({ action: 'ticket_add', title: '排障 #10002联通', project: '对账系统', url: 'https://issuetrack.example.com/issues/10002', date: '2026-10-15', hours: 3, note: '不改' });
+  await host.post({ action: 'holiday_override_set', date: '2026-10-14', kind: 'holiday' });
+
+  await host.post({ action: 'report_create', type: 'weekly', date: '2026-10-09' });
+  const monthly = await host.post({ action: 'report_create', type: 'monthly', date: '2026-10-05' });
+  await host.post({ action: 'report_create', type: 'project', project: '订单中台', date: '2026-10-05' });
+  await host.post({ action: 'report_archive', id: monthly.result.data.id });
+
+  const views = {};
+  for (const [key, view, params] of [
+    ['bootstrap', 'bootstrap', {}],
+    ['today', 'today', {}],
+    ['todos', 'todos', { status: 'all' }],
+    ['projects', 'projects', {}],
+    ['hours', 'hours', { month: '2026-10' }],
+    ['stats', 'stats', { dim: 'month', from: '2026-01-01', to: '2026-12-31' }],
+    ['statsYear', 'stats', { dim: 'year', from: '2026-01-01', to: '2026-12-31', heatmap: '1' }],
+    ['statsDay', 'stats', { dim: 'day', from: '2026-10-01', to: '2026-10-12' }],
+    ['reports', 'reports', { status: 'all' }],
+  ]) {
+    views[key] = (await host.get(view, params)).view;
+  }
+  views.report = (await host.get('report', { id: views.reports.reports[0].id })).view;
+  views.orderId = order;
+  views.reconId = recon;
+  return views;
+}
+
+/* ================================================================== *
+ * 3. 装载 client.js 并渲染
+ * ================================================================== */
+
+/* ================================================================== *
+ * 4. 主流程
+ * ================================================================== */
+
+console.log('AI 工作台账 · Client 半体渲染测试');
+
+const views = await collectViews();
+
+// 载入 client.js（它是同步的 window.__ModuleLoader__.load 调用）
+let captured = null;
+const slots = { panel: null, main: null };
+
+globalThis.window = {
+  __ModuleLoader__: {
+    load(def) {
+      captured = def;
+    },
+  },
+  localStorage: { getItem: () => null, setItem: () => {} },
+};
+globalThis.document = {
+  createElement: () => ({ click: () => {}, style: {} }),
+  body: { appendChild: () => {}, removeChild: () => {} },
+};
+globalThis.fetch = () => Promise.resolve({ json: () => Promise.resolve({ ok: false }) });
+globalThis.Blob = class Blob {};
+globalThis.URL.createObjectURL = () => 'blob:x';
+globalThis.URL.revokeObjectURL = () => {};
+const realSetInterval = globalThis.setInterval;
+const realClearInterval = globalThis.clearInterval;
+globalThis.setInterval = () => 0;
+globalThis.clearInterval = () => {};
+
+await import(join(PLUGIN_DIR, 'client.js'));
+
+group('1. 插件装载');
+check('client.js 通过 __ModuleLoader__ 注册了 factory', () => {
+  assert.ok(captured, '没有捕获到 load()');
+  assert.equal(captured.id, 'dsh-ai-workbench');
+  assert.equal(typeof captured.factory, 'function');
+});
+
+const react = createMiniReact();
+const plugin = captured.factory((name) => {
+  if (name === 'react') return react;
+  throw new Error(`意外的模块请求：${name}`);
+});
+
+check('factory 返回 slots 注入的插件对象', () => {
+  assert.deepEqual(plugin.inject, ['slots']);
+  assert.equal(typeof plugin.apply, 'function');
+});
+
+const ctx = {
+  effect: (fn) => fn(),
+  slots: {
+    inject: (_name, fn) => fn(),
+    register: (config, component) => {
+      if (config.name === 'sidebar.panellist') slots.panel = { config, component };
+      if (config.name === 'main') {
+        slots.main = { config, component };
+        // 把真实 store 的 api 接出来，用来测「请求带的 today 是不是当天」
+        if (typeof config.inject === 'function') slots.api = config.inject().api;
+      }
+      return () => {};
+    },
+  },
+};
+plugin.apply(ctx);
+
+check('注册了 sidebar.panellist 与 main 两个槽位', () => {
+  assert.ok(slots.panel, '缺少 sidebar.panellist');
+  assert.ok(slots.main, '缺少 main');
+  assert.equal(slots.panel.config.id, 'ai-workbench');
+  assert.equal(slots.panel.config.order, 30);
+  assert.equal(slots.main.config.key, 'ai-workbench');
+});
+
+check('侧栏图标可以独立渲染', () => {
+  const { tree } = react.render(react.createElement(slots.panel.component, { active: true }));
+  assert.equal(tree.type, 'svg');
+  assert.ok(sizeOf(tree) >= 4);
+});
+
+/**
+ * 这一组是「白屏回归」。
+ *
+ * 之前的教训：测试里的假 api 是照着我「以为面板需要什么」手写的，
+ * 而插件真正暴露给面板的 api 少了 getSnapshot / subscribe，
+ * 结果真机上一打开就是空白，测试却全绿。
+ *
+ * 所以这里改用 `main` 槽位 config.inject() 拿到的**真 api** 来断言契约与首屏渲染。
+ */
+group('1b. 面板与插件之间的 api 契约（白屏回归）');
+{
+  const realApi = slots.main.config.inject().api;
+
+  check('api 暴露了面板用到的每一个方法', () => {
+    assert.ok(realApi, 'main 槽位的 inject() 没有给出 api');
+    for (const name of ['getSnapshot', 'subscribe', 'open', 'reload', 'send', 'refreshBoot', 'flash']) {
+      assert.equal(typeof realApi[name], 'function', `api.${name} 不是函数（面板会直接崩）`);
+    }
+  });
+
+  check('api.getSnapshot() 返回面板依赖的字段', () => {
+    const snap = realApi.getSnapshot();
+    assert.equal(typeof snap, 'object');
+    for (const key of ['ready', 'loading', 'error', 'busy', 'flash', 'boot', 'viewName', 'viewParams', 'view', 'today']) {
+      assert.ok(key in snap, `快照缺少字段 ${key}`);
+    }
+    assert.match(snap.today, /^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  check('api.subscribe() 返回可用的退订函数', () => {
+    let called = 0;
+    const off = realApi.subscribe(() => {
+      called += 1;
+    });
+    assert.equal(typeof off, 'function');
+    off();
+    assert.equal(called, 0);
+  });
+
+  check('用真 api 渲染 WorkPage 首屏不会崩（真机白屏就是这个原因）', () => {
+    react.presets({});
+    const { tree, effectErrors } = react.render(react.createElement(slots.main.component, { api: realApi }));
+    assert.equal(effectErrors.length, 0, effectErrors.map((e) => e.message).join('; '));
+    assert.ok(sizeOf(tree) > 20, `首屏只渲染了 ${sizeOf(tree)} 个节点`);
+    assert.ok(textOf(tree).includes('AI 工作台账'));
+  });
+
+  check('api 契约没有被分页组件私自扩展（面板只应依赖上面这些）', () => {
+    const extra = Object.keys(realApi).filter(
+      (key) => !['getSnapshot', 'subscribe', 'open', 'reload', 'send', 'refreshBoot', 'flash'].includes(key),
+    );
+    assert.deepEqual(extra, [], `api 上出现了未在契约里的字段：${extra.join(', ')}`);
+  });
+}
+
+/* ------------------------------------------------------------------ *
+ * 各分页渲染
+ * ------------------------------------------------------------------ */
+
+/** 造一个假的 api（不真的发请求，只记录调用）。 */
+function fakeApi(viewName, view) {
+  const calls = [];
+  return {
+    calls,
+    getSnapshot: () => ({
+      ready: true,
+      loading: false,
+      error: null,
+      busy: null,
+      flash: null,
+      boot: views.bootstrap,
+      viewName,
+      viewParams: {},
+      view,
+      today: '2026-10-12',
+    }),
+    subscribe: () => () => {},
+    open: (name, params) => {
+      calls.push(['open', name, params]);
+      return Promise.resolve();
+    },
+    reload: () => {
+      calls.push(['reload']);
+      return Promise.resolve();
+    },
+    send: (action, payload) => {
+      calls.push(['send', action, payload]);
+      return Promise.resolve({ ok: true, data: { id: 'x' } });
+    },
+    refreshBoot: () => {
+      calls.push(['refreshBoot']);
+      return Promise.resolve();
+    },
+    flash: (kind, text) => calls.push(['flash', kind, text]),
+  };
+}
+
+/** 渲染一个分页（通过预设 WorkPage 的第 0 个 useState = tab）。 */
+function renderPage(tab, extraPresets = {}, viewOverride) {
+  const viewMap = {
+    today: views.today,
+    projects: views.projects,
+    hours: views.hours,
+    reports: views.reports,
+    stats: views.stats,
+  };
+  const api = fakeApi(tab, viewOverride ?? viewMap[tab]);
+  // WorkPage 的 hook 顺序：0=snapshot(useSnapshot)、1=subscribe effect、2=tab、3=month、4=settingsOpen
+  react.presets({ WorkPage: { 2: tab }, ...extraPresets });
+  const { tree, effectErrors } = react.render(react.createElement(slots.main.component, { api }));
+  return { tree, text: textOf(tree), api, effectErrors };
+}
+
+group('2. 六个分页都能无异常渲染');
+{
+  const expectations = {
+    today: ['AI 工作台账', '今日待办', '整理接口文档', '每日站会', '新增', '本周完成', '顺延'],
+    projects: ['订单中台', '对账系统', '新建项目', '完成'],
+    hours: ['法定工作日', '必须工时', '127.5h', '140.25h', '本月工单', '问题/任务', '无工时', '类型'],
+    reports: ['生成报表', '周报', '报表库', '已归档'],
+    stats: ['汇总', '完成率', '工时达成率'],
+  };
+
+  for (const [tab, needles] of Object.entries(expectations)) {
+    check(`「${tab}」分页渲染成功且包含关键内容`, () => {
+      const { tree, text, effectErrors } = renderPage(tab);
+      assert.equal(effectErrors.length, 0, `渲染副作用抛错：${effectErrors.map((e) => e.message).join('; ')}`);
+      assert.ok(sizeOf(tree) > 40, `渲染树太小（${sizeOf(tree)} 个节点）`);
+      for (const needle of needles) {
+        assert.ok(text.includes(needle), `输出里缺少「${needle}」`);
+      }
+    });
+  }
+}
+
+group('2b. 数据仓库：请求必须带当天日期');
+{
+  check('真实 store 暴露出来了', () => {
+    assert.ok(slots.api, '没能从 main 的 inject 里拿到 api');
+    assert.equal(typeof slots.api.open, 'function');
+    assert.ok(slots.api.getSnapshot().today, '快照里应当有 today');
+  });
+
+  await checkAsync('机器日期变了之后，open 必须按「今天」发请求，而不是仓库里缓存的旧日期', async () => {
+    const api = slots.api;
+    const stale = api.getSnapshot().today;
+    const urls = [];
+    const realFetch = globalThis.fetch;
+    const RealDate = globalThis.Date;
+    try {
+      globalThis.fetch = (url) => {
+        urls.push(String(url));
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ ok: true, view: { date: '2026-12-01' }, rollover: null }),
+        });
+      };
+      // 把「机器时钟」拨到一个月后
+      globalThis.Date = class extends RealDate {
+        constructor(...args) {
+          const fake = new RealDate('2026-12-01T09:00:00+08:00');
+          if (args.length === 0) super(fake.getTime());
+          else super(...args);
+        }
+      };
+      await api.open('today');
+    } finally {
+      globalThis.Date = RealDate;
+      globalThis.fetch = realFetch;
+    }
+    assert.equal(urls.length, 1, `应当只发一次请求，实际 ${urls.length} 次`);
+    assert.notEqual(stale, '2026-12-01', '前置条件：仓库里缓存的应当是旧日期');
+    assert.match(urls[0], /today=2026-12-01/, `请求应当带今天的日期，实际：${urls[0]}`);
+  });
+}
+
+group('2c. 数据仓库：乱序响应不能覆盖新数据');
+{
+  /** 装一个可控的 fetch：按给的 payload 顺序 resolve。 */
+  function stubFetch(payloads) {
+    const pending = payloads.slice();
+    const urls = [];
+    globalThis.fetch = (url) => {
+      urls.push(String(url));
+      const next = pending.shift();
+      return new Promise((resolve) => {
+        // 用 setTimeout(0) 让两个请求真的并发
+        setTimeout(() => resolve({ ok: true, status: 200, json: () => Promise.resolve(next) }), 0);
+      });
+    };
+    return urls;
+  }
+
+  await checkAsync('先发的慢响应回来时，不能把后发的快响应盖掉', async () => {
+    const api = slots.api;
+    const realFetch = globalThis.fetch;
+    try {
+      // 第一个请求的响应故意晚到（用一个很长的 value 表示“旧数据”）
+      globalThis.fetch = ((seq) => (url) => {
+        seq.push(String(url));
+        const isFirst = seq.length === 1;
+        return new Promise((resolve) =>
+          setTimeout(
+            () => resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true, view: { date: isFirst ? '旧的' : '新的' }, rollover: null }) }),
+            isFirst ? 40 : 5,
+          ),
+        );
+      })([]);
+
+      const slow = api.open('today');
+      const fast = api.open('projects');
+      await Promise.all([slow, fast]);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    const snap = api.getSnapshot();
+    assert.equal(snap.viewName, 'projects', '先发慢回的那次不该改写 viewName');
+    assert.equal(snap.view.date, '新的', `慢响应把新数据盖掉了：${JSON.stringify(snap.view)}`);
+  });
+
+  await checkAsync('send 的响应也不能覆盖期间切换过的分页', async () => {
+    const api = slots.api;
+    const realFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = ((seq) => (url, options) => {
+        seq.push(String(url || 'POST'));
+        const isPost = String(options?.method || '').toUpperCase() === 'POST';
+        return new Promise((resolve) =>
+          setTimeout(
+            () => resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true, view: { date: isPost ? '写操作返回的' : '分页自己的' }, result: { ok: true } }) }),
+            isPost ? 40 : 5,
+          ),
+        );
+      })([]);
+
+      const writing = api.send('todo_complete', { id: 'x' });
+      const opening = api.open('projects');
+      await Promise.all([writing, opening]);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    const snap = api.getSnapshot();
+    assert.equal(snap.view.date, '分页自己的', `写操作的慢响应盖掉了分页数据：${JSON.stringify(snap.view)}`);
+  });
+}
+
+group('3. 真实数据是否正确落到界面上');
+{
+  check('工时页：夹具把 10-14 手工标成放假日 → 17 个工作日 / 127.5h / 140.25h', () => {
+    const { text } = renderPage('hours');
+    assert.ok(text.includes('127.5h'), '缺少计划工时 127.5h');
+    assert.ok(text.includes('140.25h'), '缺少必须工时 140.25h');
+    assert.ok(text.includes('17'), '工作日数应当变成 17');
+    assert.ok(text.includes('2026 年 10 月'), '缺少月份标题');
+    // 「调休 / 国庆节」原来靠月历展示，月历去掉后不再出现在页面上
+    assert.ok(!text.includes('国庆节'), '月历已移除，不该再有节假日名');
+    // 手工覆盖的效果体现在数字上（18 → 17 天、135h → 127.5h），月历没了就没有文案了
+    assert.ok(text.includes('17'), '工作日数应当受手工覆盖影响');
+    assert.equal(views.hours.workdays, 17, '夹具里的 10-14 覆盖应当生效');
+  });
+
+  check('工时页：10-13 标记为请假后单独统计，且不扣减必须工时', () => {
+    const { text } = renderPage('hours');
+    assert.ok(text.includes('请假'), '缺少请假统计');
+  });
+
+  check('今日页显示顺延 / 逾期 / 积压提示', () => {
+    const { text } = renderPage('today');
+    assert.ok(text.includes('顺延'), '缺少顺延提示');
+    assert.ok(text.includes('逾期'), '缺少逾期提示');
+  });
+
+  check('报表页列出三份报表并标注状态', () => {
+    const { text } = renderPage('reports');
+    assert.ok(text.includes('W40'), `缺少周报标题：${JSON.stringify(text.slice(0, 300))}`);
+    assert.ok(text.includes('已归档'), '缺少已归档状态');
+    assert.ok(text.includes('草稿'), '缺少草稿状态');
+  });
+
+  check('统计页给出汇总指标', () => {
+    const { text } = renderPage('stats');
+    assert.ok(/完成率/.test(text));
+    assert.ok(/项/.test(text));
+  });
+
+  check('统计页切到按年时渲染热力图', () => {
+    const { text, effectErrors } = renderPage('stats', { StatsTab: { 0: 'year' } }, views.statsYear);
+    assert.equal(effectErrors.length, 0, effectErrors.map((e) => e.message).join('; '));
+    assert.ok(text.includes('热力图'), '缺少热力图');
+  });
+
+  check('项目页显示项目进度与投入工时', () => {
+    const { text } = renderPage('projects');
+    assert.ok(text.includes('OMS'), '缺少项目代号');
+    assert.ok(text.includes('完成'), '缺少完成进度');
+  });
+}
+
+group('3f. 统计页默认落在「本月」');
+{
+  check('首次进入统计页只发一次请求，且区间是本月', () => {
+    const api = fakeApi('stats', views.stats);
+    react.presets({ WorkPage: { 2: 'stats' } });
+    react.render(react.createElement(slots.main.component, { api }));
+
+    const opens = api.calls.filter((c) => c[0] === 'open' && c[1] === 'stats');
+    assert.equal(opens.length, 1, `只该发一次统计请求，实际 ${opens.length} 次：${JSON.stringify(opens)}`);
+    const params = opens[0][2];
+    assert.equal(params.dim, 'month');
+    assert.match(params.from, /^\d{4}-\d{2}-01$/, `起点应当是月初，实际 ${params.from}`);
+    assert.ok(params.from.slice(0, 7) === params.to.slice(0, 7), `起止应当同一个月：${params.from} ~ ${params.to}`);
+    assert.ok(!/^\d{4}-01-01$/.test(params.from) || params.from === new Date().toISOString().slice(0, 8) + '01', '不该退回到 1 月 1 日');
+  });
+
+  check('「本月」预设高亮，「本年」不高亮', () => {
+    const api = fakeApi('stats', views.stats);
+    react.presets({ WorkPage: { 2: 'stats' } });
+    const { tree } = react.render(react.createElement(slots.main.component, { api }));
+    const toggles = [];
+    (function walk(node) {
+      if (!node) return;
+      if (node.type === 'button' && ['本月', '本季度', '本年', '近 30 天'].includes(textOf(node).trim())) {
+        toggles.push({ label: textOf(node).trim(), className: node.props?.className || '' });
+      }
+      for (const child of node.children || []) walk(child);
+    })(tree);
+    const on = toggles.filter((t) => /is-on/.test(t.className)).map((t) => t.label);
+    assert.deepEqual(on, ['本月'], `高亮的应当是「本月」，实际 ${JSON.stringify(on)}`);
+  });
+}
+
+group('3g. 换肤：三套皮肤 + 记住选择');
+{
+  check('根节点带 data-skin，默认 dusk', () => {
+    const { tree } = renderPage('today');
+    const page = findNode(tree, (n) => n.type === 'div' && /aw-page/.test(n.props?.className || ''));
+    assert.ok(page, '找不到 .aw-page');
+    assert.equal(page.props['data-skin'], 'horizon', `默认皮肤应当是 horizon，实际 ${page.props['data-skin']}`);
+  });
+
+  check('三套皮肤都在 CSS 里声明了完整令牌', () => {
+    const { tree } = renderPage('today');
+    const css = cssOf(tree);
+    for (const skin of ['horizon', 'lido', 'dusk', 'jade']) {
+      assert.match(css, new RegExp(`\\.aw-page\\[data-skin="${skin}"\\]`), `缺少 ${skin} 皮肤`);
+    }
+  });
+
+  check('设置页里能选外观，选中值就是当前皮肤', () => {
+    const api = fakeApi('hours', views.hours);
+    react.presets({ WorkPage: { 2: 'hours', 3: '2026-10', 4: true } });
+    const { tree } = react.render(react.createElement(slots.main.component, { api }));
+    const page = findNode(tree, (n) => n.type === 'div' && n.props?.className === 'aw-settings-page');
+    assert.ok(page, '设置页没渲染');
+    const select = findNode(page, (n) => n.type === 'select' && (n.children || []).some((o) => o.type === 'option' && /暮色/.test(textOf(o))));
+    assert.ok(select, '找不到「外观」下拉');
+    const options = (select.children || []).map((o) => textOf(o).trim());
+    assert.deepEqual(options, ['Horizon', '暖滩', '暮色', '青玉']);
+    assert.equal(select.props.value, 'horizon', '默认选中 Horizon');
+  });
+
+  check('首屏把「今日待办」的数字放到最大一级', () => {
+    const { tree } = renderPage('today');
+    const head = findNode(tree, (n) => n.type === 'section' && n.props?.className === 'aw-dayhead');
+    assert.ok(head, '首屏缺少 dayhead');
+    const num = findNode(head, (n) => n.type === 'span' && n.props?.className === 'aw-dayhead-num');
+    assert.ok(num, '缺少今日待办的大数字');
+    assert.equal(textOf(num).trim(), String(views.today.stats.plannedCount));
+    assert.ok(textOf(head).includes('今日待办'), '数字旁边要有标签');
+  });
+}
+
+group('3g3. 设置弹层与分页条的紧凑度');
+{
+  check('设置页是行式布局：左名称右控件，组间大留白', () => {
+    const css = cssOf(renderPage('today').tree) || '';
+    for (const rule of ['.aw-settings-page{', '.aw-set-group{', '.aw-set-row{', '.aw-set-label{', '.aw-set-ctl{']) {
+      assert.ok(css.includes(rule), `缺少 ${rule} —— 设置页会失去行式布局`);
+    }
+    // 一行一项：两列栅格，名称在左、控件在右
+    const row = (css.match(/^\.aw-set-row\{[^}]*\}/m) || [])[0];
+    assert.match(row, /grid-template-columns:minmax\(0,1fr\) minmax\(220px,360px\)/, `行应当是「名称 | 控件」两列：${row}`);
+    // 组间多留白、组内少留白
+    const group = (css.match(/^\.aw-set-group\{[^}]*\}/m) || [])[0];
+    assert.match(group, /margin-top:34px/, `组间距应当明显大于行间距：${group}`);
+    assert.match(row, /padding:14px 0/, `行内边距应当更小：${row}`);
+    // 不再有外层卡片
+    // 设置页独占内容区（flash 例外：保存提示要看得到）
+    assert.ok(
+      /\.aw-inner\.is-settings>\*:not\(\.aw-settings-page\):not\(\.aw-flash\)\{display:none!important\}/.test(css),
+      '设置页应当独占内容区（且保留 flash 提示）',
+    );
+  });
+
+  check('分页是左栏竖排导航，选中项有指示条', () => {
+    const css = cssOf(renderPage('today').tree) || '';
+    const rule = (css.match(/^\.aw-tabs\{[^}]*\}/m) || [])[0];
+    assert.match(rule, /flex-direction:column/, `分页应当竖排在左栏：${rule}`);
+    assert.match(css, /\.aw-tab\.is-on::after\{[^}]*background:var\(--accent\)/, '选中项应当有指示条');
+    assert.match(css, /@media \(max-width:1080px\)/, '窄屏应当降级成横向分页条');
+  });
+}
+
+group('3i. design.md 契约：规范写了什么，代码就得是什么');
+{
+  const docPath = join(PLUGIN_DIR, 'design.md');
+  const doc = existsSync(docPath) ? readFileSync(docPath, 'utf8') : '';
+
+  check('design.md 存在，且明确自己是规范而不是日志', () => {
+    assert.ok(doc.length > 2000, `design.md 太短或不存在（${doc.length} 字符）`);
+    assert.match(doc, /这是规范，不是记录/, '开头要说明它的地位');
+    assert.match(doc, /DESIGN-LOG\.md/, '要指向决策日志');
+  });
+
+  check('文档里写的尺度值与样式表一致', () => {
+    const css = cssOf(renderPage('today').tree) || '';
+    // 文档中声明的关键值必须能在 CSS 里找到原型
+    const pairs = [
+      ['--fs-caption:12px', '字号 caption'],
+      ['--fs-body:14px', '字号 body'],
+      ['--fs-head:26px', '字号 head'],
+      ['--fs-display:32px', '字号 display'],
+      ['--r-ctl:999px', '控件圆角'],
+      ['--r-card:20px', '卡片圆角'],
+      ['--r-inner:12px', '内部圆角'],
+      ['--ctl-h:50px', '控件高度'],
+    ];
+    for (const [needle, label] of pairs) {
+      assert.ok(doc.includes(needle), `design.md 没有声明 ${label}（${needle}）`);
+      assert.ok(css.includes(needle), `样式表里找不到文档声明的 ${label}（${needle}）`);
+    }
+  });
+
+  check('字重只有 400 / 500 / 600（文档第 5 节）', () => {
+    const css = cssOf(renderPage('today').tree) || '';
+    const weights = new Set((css.match(/font-weight:\d+/g) || []).map((x) => x.split(':')[1]));
+    const bad = [...weights].filter((w) => !['400', '500', '600'].includes(w));
+    assert.deepEqual(bad, [], `出现了文档没允许的字重：${JSON.stringify(bad)}`);
+    assert.match(doc, /字重只有 400 \/ 500 \/ 600/, '文档要写清这条');
+  });
+
+  check('颜色只出现在皮肤块里（文档第 2 节）', () => {
+    const css = cssOf(renderPage('today').tree) || '';
+    // 去掉四个皮肤块 + 共用尺度块之后，不应再有十六进制颜色
+    const stripped = css
+      .replace(/\/\*[\s\S]*?\*\//g, '') // 注释（含 stamp 里记的参考色值）不算颜色声明
+      .replace(/\.aw-page\[data-skin="[a-z]+"\]\{[\s\S]*?\n\}/g, '')
+      .replace(/\.aw-page\{[\s\S]*?\n\}/, '');
+    const hex = stripped.match(/#[0-9a-fA-F]{3,8}\b/g) || [];
+    assert.deepEqual(hex, [], `皮肤块外面还有字面量颜色：${JSON.stringify(hex.slice(0, 5))}`);
+  });
+
+  check('horizon 的输入框描边是参考稿原值 #E0E5F2（design.md 里登记的例外）', () => {
+    const css = cssOf(renderPage('today').tree) || '';
+    const horizon = (css.match(/\.aw-page\[data-skin="horizon"\]\{[\s\S]*?\n\}/) || [])[0] || '';
+    assert.match(horizon, /--field-line:#E0E5F2/, '描边应当与参考稿一致');
+    // 这个例外成立的前提：字段必须有 label，不能只靠边框区分
+    assert.match(doc, /已批准的唯一例外/, 'design.md 要写明这是例外');
+    assert.match(doc, /label/, 'design.md 要写明可读性由 label 承担');
+  });
+
+  check('左栏 232px / 内容 1180px / 窄屏 1080px 断点都在', () => {
+    const css = cssOf(renderPage('today').tree) || '';
+    assert.match(doc, /232px/, '文档要写左栏宽度');
+    assert.ok(css.includes('flex:0 0 232px'), '左栏宽度与文档不一致');
+    assert.ok(css.includes('max-width:1180px'), '内容区宽度与文档不一致');
+    assert.ok(css.includes('@media (max-width:1080px)'), '窄屏断点与文档不一致');
+  });
+}
+
+group('3h. 报表页的兜底：缺字段也要渲染出来');
+{
+  check('宿主没给 counts 时，报表库照样渲染（不再整页卡在加载中）', () => {
+    const broken = { ...views.reports, counts: undefined };
+    const api = fakeApi('reports', broken);
+    react.presets({ WorkPage: { 2: 'reports' } });
+    const text = textOf(react.render(react.createElement(slots.main.component, { api })).tree);
+    assert.ok(!text.includes('加载中…'), '不该卡在加载中');
+    assert.ok(text.includes('报表库'), '报表库不见了');
+    assert.match(text, /草稿\s*\d+/, '草稿计数应当从列表里自己数出来');
+  });
+
+  check('设置弹层底部显示界面版本，便于确认加载了哪一版', () => {
+    const api = fakeApi('hours', views.hours);
+    react.presets({ WorkPage: { 2: 'hours', 3: '2026-10', 4: true } });
+    const text = textOf(react.render(react.createElement(slots.main.component, { api })).tree);
+    assert.match(text, /界面版本 v\d/, '设置里应当能看到版本号');
+  });
+}
+
+group('3f2. 周报日期可自定义，默认「上周五 ~ 本周四」');
+{
+  /** 找到「生成报表」那张卡片。 */
+  function generateCard(tree) {
+    return findNode(tree, (n) => n.type === 'div' && /aw-card/.test(n.props?.className || '') && textOf(n).includes('生成草稿'));
+  }
+
+  check('默认给「上周五 ~ 本周四」两个日期框，不是单个锚点日期', () => {
+    const { tree } = renderPage('reports');
+    const card = generateCard(tree);
+    assert.ok(card, '找不到生成报表卡片');
+    const dates = [];
+    (function walk(node) {
+      if (!node) return;
+      if (node.type === 'input' && node.props?.type === 'date') dates.push(node);
+      for (const child of node.children || []) walk(child);
+    })(card);
+    assert.equal(dates.length, 2, `周报应当有两个日期框，实际 ${dates.length} 个`);
+    const from = new Date(`${dates[0].props.value}T00:00:00`);
+    const to = new Date(`${dates[1].props.value}T00:00:00`);
+    assert.equal(from.getDay(), 5, `起点应当是周五，实际 ${dates[0].props.value}（周${'日一二三四五六'[from.getDay()]}）`);
+    assert.equal(to.getDay(), 4, `终点应当是周四，实际 ${dates[1].props.value}（周${'日一二三四五六'[to.getDay()]}）`);
+    assert.equal((to - from) / 86400000, 6, '应当是连续 7 天');
+    assert.ok(textOf(card).includes('上周五'), '应当说明默认是「上周五 ~ 本周四」');
+    assert.ok(textOf(card).includes('本周四'), '应当说明默认是「上周五 ~ 本周四」');
+    // 终点是「最近一个周四」，只能是当天或之前（周四当天正好等于今天）
+    const todayKey = new Date().toLocaleDateString('sv');
+    assert.ok(dates[1].props.value <= todayKey, `默认区间不该跑到今天之后：${dates[1].props.value} > ${todayKey}`);
+    assert.equal(new Date(`${dates[1].props.value}T00:00:00`).getDay(), 4, '终点必须是周四');
+  });
+
+  check('改日期后生成：请求里带上 from / to', () => {
+    const api = fakeApi('reports', views.reports);
+    react.presets({ WorkPage: { 2: 'reports' } });
+    const element = react.createElement(slots.main.component, { api });
+
+    const card = generateCard(react.render(element).tree);
+    const dates = [];
+    (function walk(node) {
+      if (!node) return;
+      if (node.type === 'input' && node.props?.type === 'date') dates.push(node);
+      for (const child of node.children || []) walk(child);
+    })(card);
+    dates[0].props.onChange({ target: { value: '2026-10-01' } });
+
+    const after = react.render(element).tree;
+    findNode(generateCard(after), (n) => n.type === 'button' && textOf(n).trim() === '生成草稿').props.onClick();
+
+    const creates = api.calls.filter((c) => c[0] === 'send' && c[1] === 'report_create');
+    assert.equal(creates.length, 1);
+    assert.equal(creates[0][2].from, '2026-10-01', '应当带上自定义起点');
+    assert.ok(creates[0][2].to, '应当带上终点');
+    assert.equal(creates[0][2].type, 'weekly');
+  });
+
+  check('没改日期时只发 date，让宿主按默认口径算', () => {
+    const api = fakeApi('reports', views.reports);
+    react.presets({ WorkPage: { 2: 'reports' } });
+    const element = react.createElement(slots.main.component, { api });
+    const card = generateCard(react.render(element).tree);
+    findNode(card, (n) => n.type === 'button' && textOf(n).trim() === '生成草稿').props.onClick();
+
+    const creates = api.calls.filter((c) => c[0] === 'send' && c[1] === 'report_create');
+    assert.equal(creates.length, 1);
+    assert.ok(creates[0][2].date, '要带 date');
+    assert.ok(!('from' in creates[0][2]) && !('to' in creates[0][2]), '没改就别传 from/to');
+  });
+
+  check('切到月报时回到单个日期框', () => {
+    const api = fakeApi('reports', views.reports);
+    react.presets({ WorkPage: { 2: 'reports' } });
+    const element = react.createElement(slots.main.component, { api });
+    const card = generateCard(react.render(element).tree);
+    const typeSelect = findNode(card, (n) => n.type === 'select' && (n.children || []).some((o) => o.type === 'option' && textOf(o).includes('周报')));
+    typeSelect.props.onChange({ target: { value: 'monthly' } });
+
+    const after = generateCard(react.render(element).tree);
+    const dates = [];
+    (function walk(node) {
+      if (!node) return;
+      if (node.type === 'input' && node.props?.type === 'date') dates.push(node);
+      for (const child of node.children || []) walk(child);
+    })(after);
+    assert.equal(dates.length, 1, '月报只要一个锚点日期');
+  });
+}
+
+group('4. 交互组件：设置弹层 / 日期编辑器 / 报表编辑器');
+{
+  check('设置弹层渲染成功（含节假日覆盖与口径说明）', () => {
+    const { text, effectErrors } = renderPage('hours', { WorkPage: { 2: 'hours', 3: '2026-10', 4: true } });
+    assert.equal(effectErrors.length, 0, effectErrors.map((e) => e.message).join('; '));
+    assert.ok(text.includes('设置'), '缺少设置标题');
+    assert.ok(text.includes('每日工时'), '缺少每日工时字段');
+    assert.ok(text.includes('节假日与调休'), '缺少节假日区块');
+    assert.ok(text.includes('2026-10-14'), '缺少已有的手工覆盖项');
+    assert.ok(text.includes('不'), '缺少口径说明');
+  });
+
+  check('工时页不再有月历（也没有日期弹层）', () => {
+    const { tree, text } = renderPage('hours');
+    assert.ok(!findNode(tree, (n) => n.props?.className === 'aw-cal'), '月历还在');
+    assert.ok(!findNode(tree, (n) => n.props?.className === 'aw-cal-cell'), '月历格子还在');
+    assert.ok(!text.includes('月历'), '不该再出现「月历」');
+    for (const gone of ['标记请假', '半天假', '加一条', '整天填报', '清空当天']) {
+      assert.ok(!text.includes(gone), `不该再出现「${gone}」`);
+    }
+  });
+
+  check('工单录入区带「类型」下拉，三档齐全', () => {
+    const { tree } = renderPage('hours');
+    const form = findNode(tree, (n) => n.props?.className === 'aw-ticket-form');
+    assert.ok(form, '找不到工单录入栅格');
+    const selects = [];
+    (function walk(node) {
+      if (!node) return;
+      if (node.type === 'select') selects.push(node);
+      for (const child of node.children || []) walk(child);
+    })(form);
+    const typeSelect = selects.find((sel) => (sel.children || []).some((opt) => opt.type === 'option' && (opt.children || []).some((c) => c.text === '任务')));
+    assert.ok(typeSelect, '找不到类型下拉');
+    const options = (typeSelect.children || []).map((opt) => (opt.children || []).map((c) => c.text).join(''));
+    assert.deepEqual(options, ['未指定', '任务', '其他']);
+  });
+
+  check('报表编辑器：选中一份报表后 Markdown 预览正确渲染', () => {
+    // ReportsTab 的 hook 顺序：0..5 是筛选项，6=selected、7=draft、8=editing
+    const { text, effectErrors } = renderPage('reports', {
+      ReportsTab: { 7: views.report, 8: views.report.content, 9: false },
+    });
+    assert.equal(effectErrors.length, 0, effectErrors.map((e) => e.message).join('; '));
+    assert.ok(text.includes('归档'), '缺少归档按钮');
+    // 这几个按钮按真机要求去掉了（注意「已定稿」是状态徽标，不是按钮）
+    const labels = collectButtons(renderPage('reports', { ReportsTab: { 7: views.report, 8: views.report.content, 9: false } }).tree);
+    for (const gone of ['定稿', '修订', '重渲染', '导出 .md']) {
+      assert.ok(!labels.includes(gone), `不该再出现「${gone}」按钮，现有：${JSON.stringify(labels)}`);
+    }
+    // 没改过内容时不该出现「保存」
+    assert.ok(!labels.includes('保存'), '没改动时不该一直显示保存按钮');
+    assert.ok(/周报/.test(text), 'Markdown 预览没有渲染出标题');
+    assert.ok(/本周完成/.test(text), 'Markdown 预览没有渲染出章节');
+  });
+
+  check('改了内容才出现「保存」，改回原样又消失', () => {
+    const api = fakeApi('reports', views.reports);
+    react.presets({
+      ReportsTab: { 7: views.report, 8: views.report.content, 9: true },
+    });
+    const element = react.createElement(slots.main.component, { api });
+    const clean = react.render(element).tree;
+    assert.ok(!collectButtons(clean).includes('保存'), '未改动时不该有「保存」');
+  });
+
+  check('周报预览保留单换行（一行一件事，不能被撑成空行密布）', () => {
+    const { tree } = renderPage('reports', {
+      ReportsTab: { 7: views.report, 8: views.report.content, 9: false },
+    });
+    const md = findNode(tree, (n) => n.type === 'div' && n.props?.className === 'aw-md');
+    assert.ok(md, '找不到预览区');
+    const breaks = countIn(md, (n) => n.type === 'br');
+    const paragraphs = countIn(md, (n) => n.type === 'p');
+    assert.ok(breaks > 0, '预览里一个 <br> 都没有，单换行被吃掉了');
+    // 周报正文没有空行，所以整块应当只被切成「本周完成：…」+「下周待办：…」两段
+    assert.ok(paragraphs <= 2, `周报不该被切成 ${paragraphs} 段`);
+  });
+
+  check('空数据也不崩（所有视图为空时）', () => {
+    const empty = {
+      today: { date: '2026-10-12', weekday: '一', weekLabel: 'x', kind: 'workday', holidayName: '', stats: { plannedCount: 0, doneCount: 0, carriedCount: 0, backlogCount: 0, overdueCount: 0, futureCount: 0, openCount: 0, progress: 0 }, todos: [], backlog: [], overdue: [], done: [], weekDone: [], dropped: [], carriedIn: [], month: { month: '2026-10', label: '2026 年 10 月', from: '2026-10-01', to: '2026-10-31', workdays: 18, planHours: 135, requiredHours: 148.5, loggedHours: 0, achievement: 0, gapHours: 148.5, remainingWorkdays: 15, needPerDay: 9.9, needPerDayOver: true }, week: { from: '2026-10-12', to: '2026-10-18', week: 42, year: 2026 }, hours: { logged: 0, target: 7.5, progress: 0, status: 'normal', note: '', entries: [], manualHours: null }, logs: [], projects: [], warnings: [] },
+      todos: { total: 0, counts: { open: 0, done: 0, dropped: 0, carried: 0 }, tags: [], todos: [] },
+      projects: [],
+      hours: (() => {
+        const copy = JSON.parse(JSON.stringify(views.hours));
+        copy.loggedHours = 0;
+        copy.achievement = 0;
+        copy.byProject = [];
+        copy.days = copy.days.map((day) => ({ ...day, hours: 0, entries: 0, status: 'normal', met: false, partial: false }));
+        return copy;
+      })(),
+      reports: { total: 0, counts: { draft: 0, final: 0, archived: 0 }, projects: [], reports: [] },
+      stats: { dim: 'month', from: '2026-01-01', to: '2026-12-31', projectId: null, buckets: [], totals: { done: 0, created: 0, dropped: 0, missed: 0, rolledOut: 0, planned: 0, onTime: 0, hours: 0, completionRate: 0, onTimeRate: 0 }, legs: { workdays: 248, planHours: 1860, requiredHours: 2046, loggedHours: 0, achievement: 0 }, byProject: [], heatmap: null },
+    };
+    const saved = {};
+    for (const key of Object.keys(empty)) saved[key] = views[key];
+    Object.assign(views, empty);
+    try {
+      for (const tab of ['today', 'projects', 'hours', 'reports', 'stats']) {
+        const { effectErrors } = renderPage(tab);
+        assert.equal(effectErrors.length, 0, `${tab} 副作用抛错：${effectErrors.map((e) => e.message).join('; ')}`);
+      }
+    } finally {
+      // 一定要恢复，否则后面所有用例都会拿到这份空数据（曾经就这样连锁失败过）
+      Object.assign(views, saved);
+    }
+  });
+}
+
+group('3b. 今日页只有三节，且完全不涉及工时');
+{
+  check('今日页只有「今日待办 / 本周完成 / 历史完成」三节，新增待办收进弹层', () => {
+    const { text } = renderPage('today');
+    for (const title of ['今日待办', '本周完成', '历史完成']) {
+      assert.ok(text.includes(title), `缺少「${title}」`);
+    }
+    // 新增入口是「今日待办」节头上的按钮，不再是独立一节
+    assert.ok(text.includes('新增'), '缺少「新增」入口');
+    for (const gone of ['本月工时', '今日工时', '随手记']) {
+      assert.ok(!text.includes(gone), `今日页不该再出现「${gone}」`);
+    }
+  });
+
+  check('今日页的面板里不出现任何工时内容', () => {
+    const { tree } = renderPage('today');
+    // 只检查 .aw-board 内部：页面副标题「待办 · 工时 · 报表」属于全局抬头，不算今日页内容
+    const boardText = (function find(node) {
+      if (!node) return null;
+      if (node.type === 'div' && node.props?.className === 'aw-board') return textOf(node);
+      for (const child of node.children || []) {
+        const hit = find(child);
+        if (hit !== null) return hit;
+      }
+      return null;
+    })(tree) || '';
+    assert.ok(boardText.length > 0, '没找到面板');
+    assert.doesNotMatch(boardText, /工时/, '今日页面板里不该出现「工时」');
+  });
+
+  check('工时只能由工单产生：工时页没有批量填报，也没有待填工作日', () => {
+    const { text } = renderPage('hours');
+    for (const gone of ['月底批量填报', '补齐未填', '待填工作日']) {
+      assert.ok(!text.includes(gone), `不该再出现「${gone}」`);
+    }
+    assert.ok(text.includes('本月工单'), '缺少本月工单表');
+    assert.ok(text.includes('记工单'), '缺少记工单入口');
+  });
+}
+
+group('3b2. 顶部与今日页的冗余 chip 已去掉');
+{
+  /** 取页面上所有 chip 的文案。 */
+  function chipTexts(tree) {
+    const out = [];
+    (function walk(node) {
+      if (!node) return;
+      if (node.type === 'span' && /aw-chip/.test(node.props?.className || '')) out.push(textOf(node).replace(/\s+/g, ' ').trim());
+      for (const child of node.children || []) walk(child);
+    })(tree);
+    return out;
+  }
+
+  check('顶部状态栏不再有「日需」「顺延中」', () => {
+    const { tree } = renderPage('today');
+    const chips = chipTexts(tree);
+    assert.ok(!chips.some((c) => c.startsWith('日需')), `不该再有日需 chip：${JSON.stringify(chips)}`);
+    assert.ok(!chips.some((c) => c.startsWith('顺延中')), `不该再有顺延中 chip：${JSON.stringify(chips)}`);
+    // 该留的还在：重构后不再是胶囊，而是外壳上的一行台账文字
+    const text = textOf(tree);
+    assert.match(text, /20\d\d 年 \d+ 月/, '本月工时的月份不该被一起删掉');
+    assert.match(text, /\d+(?:\.\d+)?h\s*\/\s*\d+(?:\.\d+)?h/, '已录 / 必须的数值不该被一起删掉');
+  });
+
+  check('今日页不再有「法定工作日」chip 和「顺延 N」chip', () => {
+    const { tree } = renderPage('today');
+    const chips = chipTexts(tree);
+    assert.ok(!chips.includes('💼 法定工作日'), `不该再有法定工作日 chip：${JSON.stringify(chips)}`);
+    assert.ok(!chips.some((c) => /^顺延 \d+$/.test(c)), `不该再有顺延 chip：${JSON.stringify(chips)}`);
+    // 重构后底部概览是一行说明文字，不再用胶囊 —— 这两个数必须还在
+    const text = textOf(tree);
+    assert.match(text, /今日待办\s+\d+/, '今日待办的数量应当保留');
+    assert.match(text, /本周完成\s+\d+/, '本周完成的数量应当保留');
+  });
+
+  check('「N 项从以前顺延到今天」这条提醒不再出现（逾期提醒保留）', () => {
+    const { text } = renderPage('today');
+    assert.doesNotMatch(text, /项从以前顺延到今天/, '顺延提醒应当去掉');
+    // 重构后逾期只出现一次（顶部那行说明里的「逾期 N」），不再另起一条同义横幅
+    assert.match(text, /逾期\s+\d+/, '逾期属于风险，仍然要在页面上出现');
+  });
+
+  check('月底提醒不再提「批量填报」（那个功能已经没了）', () => {
+    const { text } = renderPage('today');
+    assert.ok(!text.includes('批量填报'), '不该再提批量填报');
+  });
+}
+
+group('3c. 优先级 P0~P3 的含义必须写在界面上');
+{
+  check('新增弹层里的优先级下拉带含义，而不是光秃秃的 P0/P1/P2/P3', () => {
+    // TodayTab 的 hook：0 showBacklog / 1 showAllHistory / 2 editing / 3 adding
+    const { text } = renderPage('today', { TodayTab: { 3: true } });
+    for (const label of ['P0 · 紧急', 'P1 · 高', 'P2 · 中', 'P3 · 低']) {
+      assert.ok(text.includes(label), `下拉里缺少「${label}」`);
+    }
+    assert.ok(text.includes('优先级：P0 紧急 · P1 高 · P2 中 · P3 低'), '缺少图例');
+  });
+
+  check('待办行的优先级徽标带悬浮说明', () => {
+    const { tree } = renderPage('today');
+    const badges = [];
+    (function walk(node) {
+      if (!node) return;
+      if (node.type === 'span' && node.props && /^aw-prio( |$)/.test(String(node.props.className))) badges.push(node.props);
+      for (const child of node.children || []) walk(child);
+    })(tree);
+    assert.ok(badges.length > 0, '一个优先级徽标都没有');
+    assert.ok(
+      badges.every((badge) => typeof badge.title === 'string' && /^P[0-3] (紧急|高|中|低)/.test(badge.title)),
+      `徽标缺少含义提示：${JSON.stringify(badges.map((b) => b.title))}`,
+    );
+  });
+
+  check('优先级也带简称，一眼能看懂', () => {
+    const { tree } = renderPage('today');
+    let labelCount = 0;
+    (function walk(node) {
+      if (!node) return;
+      if (node.type === 'span' && node.props && node.props.className === 'aw-prio-label') labelCount += 1;
+      for (const child of node.children || []) walk(child);
+    })(tree);
+    assert.ok(labelCount > 0, '徽标里没有简称');
+  });
+}
+
+group('3e. 今日页只保留一块面板，各节用分割线');
+{
+  /** 收集某一类节点的数量。 */
+  function countNodes(tree, predicate) {
+    let n = 0;
+    (function walk(node) {
+      if (!node) return;
+      if (predicate(node)) n += 1;
+      for (const child of node.children || []) walk(child);
+    })(tree);
+    return n;
+  }
+
+  check('今日页只有 1 块带边框的面板，且正好切成三节', () => {
+    const { tree } = renderPage('today');
+    const boards = countNodes(tree, (n) => n.type === 'div' && n.props?.className === 'aw-board');
+    const secs = countNodes(tree, (n) => n.type === 'section' && /aw-sec/.test(n.props?.className || ''));
+    assert.equal(boards, 1, '今日页应当只有一块面板');
+    // 今日待办 / 本周完成 / 历史完成（新增待办已收进弹层）
+    assert.equal(secs, 3, `应当正好是三节，实际 ${secs} 节`);
+  });
+
+  check('今日页不再一节一个卡片', () => {
+    const { tree } = renderPage('today');
+    const cards = countNodes(tree, (n) => n.type === 'div' && /aw-card/.test(n.props?.className || ''));
+    assert.equal(cards, 0, `今日页还剩 ${cards} 个卡片，边框会太密`);
+  });
+
+  check('分割线规则：节与节之间有细线，首节没有', () => {
+    const { tree } = renderPage('today');
+    const css = cssOf(tree);
+    assert.match(css, /^\.aw-sec\{[^}]*border-top:1px solid var\(--rule\)/m, '.aw-sec 缺少分割线');
+    assert.match(css, /^\.aw-sec\.is-first\{border-top:0/m, '首节应当去掉分割线');
+    assert.match(css, /^\.aw-board,\.aw-card\{[^}]*background:var\(--paper-2\)/m, '.aw-board 应当是白卡面');
+  });
+
+  check('积压折叠在「今日待办」节里，用的是虚线而不是单独一节', () => {
+    const { tree } = renderPage('today');
+    const folds = countNodes(tree, (n) => n.type === 'div' && n.props?.className === 'aw-fold');
+    assert.equal(folds, 1, '积压应当折叠在待办节里（夹具里正好有 1 条积压）');
+  });
+
+  check('本周完成用实心打勾方块，而不是删除线', () => {
+    const { tree, text } = renderPage('today');
+    const checks = countNodes(tree, (n) => n.type === 'span' && n.props?.className === 'aw-check-done');
+    assert.ok(checks > 0, '本周完成里没有绿色打勾');
+    const css = cssOf(tree);
+    assert.doesNotMatch(css, /text-decoration:line-through/, '完成的条目不该再用删除线');
+    // 按 Pixso 参考稿：选中/完成一律是主色实心 + 白色勾
+    assert.match(css, /^\.aw-check-done\{[^}]*background:var\(--accent\)/m, '打勾应当用主色填充');
+    assert.match(css, /^\.aw-check-done\{[^}]*border-radius:var\(--r-check\)/m, '打勾圆角应当走 --r-check 令牌');
+    assert.ok(text.includes('本周完成'), '缺少本周完成节');
+  });
+}
+
+group('3c2. 今日待办的删除收在 ⋯ 菜单里（排在「放弃」后面，两步确认）');
+{
+  /** 展开 Menu，返回渲染出来的按钮文案。 */
+  function openMenu(element) {
+    const first = react.render(element).tree;
+    const more = findNode(first, (n) => n.type === 'button' && textOf(n).trim() === '⋯');
+    assert.ok(more, '找不到 ⋯ 按钮');
+    more.props.onClick();
+    return react.render(element).tree;
+  }
+
+  function clickLabel(tree, label) {
+    const node = findNode(tree, (n) => n.type === 'button' && textOf(n).trim() === label);
+    assert.ok(node, `找不到「${label}」按钮，现有：${JSON.stringify(collectButtons(tree))}`);
+    node.props.onClick();
+  }
+
+  check('行内只有一个 ⋯，删除在菜单里且排在「放弃」后面', () => {
+    const api = fakeApi('today', views.today);
+    react.presets({ WorkPage: { 2: 'today' } });
+    const element = react.createElement(slots.main.component, { api });
+
+    // 收起状态：行内不该有「删除」
+    const closed = react.render(element).tree;
+    const closedLabels = collectButtons(closed);
+    assert.ok(!closedLabels.includes('删除'), `收起时不该直接露出删除：${JSON.stringify(closedLabels)}`);
+    assert.ok(closedLabels.includes('⋯'));
+
+    // 展开后：推到明天 / 今天做 / 转积压 / 放弃 / 删除
+    const opened = openMenu(element);
+    const labels = collectButtons(opened);
+    for (const want of ['推到明天', '今天做', '转积压', '放弃', '删除']) {
+      assert.ok(labels.includes(want), `菜单里缺少「${want}」：${JSON.stringify(labels)}`);
+    }
+    assert.ok(
+      labels.indexOf('删除') > labels.indexOf('放弃'),
+      `「删除」应当排在「放弃」后面，实际：${JSON.stringify(labels)}`,
+    );
+  });
+
+  check('点菜单里的「删除」不立刻删，先要确认；确认后只发一次 todo_delete', () => {
+    const api = fakeApi('today', views.today);
+    react.presets({ WorkPage: { 2: 'today' } });
+    const element = react.createElement(slots.main.component, { api });
+
+    const opened = openMenu(element);
+    clickLabel(opened, '删除');
+
+    const confirming = react.render(element).tree;
+    const labels = collectButtons(confirming);
+    assert.ok(labels.includes('确认删除'), `应当出现确认按钮：${JSON.stringify(labels)}`);
+    assert.ok(labels.includes('取消'));
+    assert.equal(
+      api.calls.filter((c) => c[0] === 'send').length,
+      0,
+      '仅仅点了「删除」不该发出任何写请求',
+    );
+
+    clickLabel(confirming, '确认删除');
+    const deletes = api.calls.filter((c) => c[0] === 'send' && c[1] === 'todo_delete');
+    assert.equal(deletes.length, 1, `确认后应当调用一次 todo_delete，实际：${JSON.stringify(api.calls)}`);
+    assert.ok(deletes[0][2] && deletes[0][2].id, 'todo_delete 必须带上待办 id');
+  });
+
+  check('点「取消」退回菜单原来的那排按钮', () => {
+    const api = fakeApi('today', views.today);
+    react.presets({ WorkPage: { 2: 'today' } });
+    const element = react.createElement(slots.main.component, { api });
+
+    clickLabel(openMenu(element), '删除');
+    const confirming = react.render(element).tree;
+    clickLabel(confirming, '取消');
+
+    const back = react.render(element).tree;
+    const labels = collectButtons(back);
+    assert.ok(!labels.includes('确认删除'), '取消后不该还留着确认按钮');
+    assert.ok(labels.includes('放弃'), '取消后应当回到菜单');
+    assert.ok(labels.includes('删除'), '取消后应当还能再点删除');
+  });
+}
+
+group('3c3. 完成度：行内可见、可在 ⋯ 里改');
+{
+  check('进行中的待办在行内显示完成度', () => {
+    const { text } = renderPage('today');
+    assert.ok(text.includes('40%'), '行内应当显示 40%');
+  });
+
+  check('⋯ 菜单里有「进度」，点了能改并调用 todo_update', () => {
+    const api = fakeApi('today', views.today);
+    react.presets({ WorkPage: { 2: 'today' } });
+    const element = react.createElement(slots.main.component, { api });
+
+    const first = react.render(element).tree;
+    const more = findNode(first, (n) => n.type === 'button' && textOf(n).trim() === '⋯');
+    assert.ok(more, '找不到 ⋯');
+    more.props.onClick();
+
+    const menu = react.render(element).tree;
+    const progressBtn = findNode(menu, (n) => n.type === 'button' && textOf(n).trim() === '进度');
+    assert.ok(progressBtn, `菜单里缺少「进度」：${JSON.stringify(collectButtons(menu))}`);
+    progressBtn.props.onClick();
+
+    const editing = react.render(element).tree;
+    const input = findNode(editing, (n) => n.type === 'input' && n.props?.type === 'number');
+    assert.ok(input, '没出现进度输入框');
+    input.props.onChange({ target: { value: '65' } });
+
+    const after = react.render(element).tree;
+    const save = findNode(after, (n) => n.type === 'button' && textOf(n).trim() === '保存');
+    assert.ok(save, '没出现保存按钮');
+    save.props.onClick();
+
+    const updates = api.calls.filter((c) => c[0] === 'send' && c[1] === 'todo_update');
+    assert.equal(updates.length, 1, `应当调用一次 todo_update，实际：${JSON.stringify(api.calls)}`);
+    assert.equal(updates[0][2].progress, 65);
+    assert.ok(updates[0][2].id, 'todo_update 必须带 id');
+  });
+}
+
+group('3c4. 待办可以修改（未完成 / 已完成都支持）');
+{
+  function openEditor(api) {
+    react.presets({ WorkPage: { 2: 'today' } });
+    const element = react.createElement(slots.main.component, { api });
+    const first = react.render(element).tree;
+    // ⋯ → 编辑
+    findNode(first, (n) => n.type === 'button' && textOf(n).trim() === '⋯').props.onClick();
+    const menu = react.render(element).tree;
+    const edit = findNode(menu, (n) => n.type === 'button' && textOf(n).trim() === '编辑');
+    assert.ok(edit, `菜单里缺少「编辑」：${JSON.stringify(collectButtons(menu))}`);
+    edit.props.onClick();
+    return { element, tree: react.render(element).tree };
+  }
+
+  check('⋯ 菜单里有「编辑」，点开是修改弹层', () => {
+    const api = fakeApi('today', views.today);
+    const { tree } = openEditor(api);
+    const text = textOf(tree);
+    assert.ok(text.includes('修改待办'), '没出现修改弹层');
+    // 字段齐全
+    for (const label of ['标题', '备注', '项目', '优先级', '顺延策略', '计划日', '截止日', '预估工时', '完成度']) {
+      assert.ok(text.includes(label), `弹层缺少「${label}」`);
+    }
+    assert.equal(api.calls.filter((c) => c[0] === 'send').length, 0, '只是打开弹层不该发请求');
+  });
+
+  check('改标题后保存，只发一次 todo_update 且带上新标题与 id', () => {
+    const api = fakeApi('today', views.today);
+    const { element, tree } = openEditor(api);
+    const modal = findNode(tree, (n) => n.type === 'div' && n.props?.className === 'aw-modal');
+    assert.ok(modal, '找不到弹层');
+    const titleInput = findNode(modal, (n) => n.type === 'input' && n.props?.className === 'aw-input' && n.props?.type === undefined);
+    assert.ok(titleInput, '找不到标题输入框');
+    assert.equal(titleInput.props.value, '对账系统灰度方案设计', '标题输入框应当预填当前标题');
+    titleInput.props.onChange({ target: { value: '改过的标题' } });
+
+    const after = react.render(element).tree;
+    const save = findNode(findNode(after, (n) => n.type === 'div' && n.props?.className === 'aw-modal'), (n) => n.type === 'button' && textOf(n).trim() === '保存');
+    assert.ok(save, '找不到保存按钮');
+    assert.equal(save.props.disabled, false, '标题非空时保存应当可用');
+    save.props.onClick();
+
+    const updates = api.calls.filter((c) => c[0] === 'send' && c[1] === 'todo_update');
+    assert.equal(updates.length, 1, `应当只发一次 todo_update，实际：${JSON.stringify(api.calls)}`);
+    assert.equal(updates[0][2].title, '改过的标题');
+    assert.ok(updates[0][2].id, '必须带 id');
+  });
+
+  check('标题清空时保存按钮禁用（不许存空标题）', () => {
+    const api = fakeApi('today', views.today);
+    const { element, tree } = openEditor(api);
+    const modal = findNode(tree, (n) => n.type === 'div' && n.props?.className === 'aw-modal');
+    const titleInput = findNode(modal, (n) => n.type === 'input' && n.props?.className === 'aw-input' && n.props?.type === undefined);
+    titleInput.props.onChange({ target: { value: '   ' } });
+    const after = react.render(element).tree;
+    const save = findNode(findNode(after, (n) => n.type === 'div' && n.props?.className === 'aw-modal'), (n) => n.type === 'button' && textOf(n).trim() === '保存');
+    assert.equal(save.props.disabled, true, '空标题时保存必须禁用');
+  });
+
+  check('已完成的任务也能编辑，且完成度锁定为 100%', () => {
+    const done = views.today.weekDone[0];
+    assert.ok(done, '夹具里没有本周完成的条目');
+    // 直接渲染弹层：hooks 顺序 0=draft
+    const api = fakeApi('today', views.today);
+    react.presets({ WorkPage: { 2: 'today' } });
+    const element = react.createElement(slots.main.component, { api });
+    // 先把 editing 指向已完成的那条：点本周完成行里的「编辑」
+    const first = react.render(element).tree;
+    const edits = [];
+    (function walk(node) {
+      if (!node) return;
+      if (node.type === 'button' && textOf(node).trim() === '编辑') edits.push(node);
+      for (const child of node.children || []) walk(child);
+    })(first);
+    assert.ok(edits.length >= 1, `本周完成行里也该有「编辑」，实际按钮数 ${edits.length}`);
+    edits[edits.length - 1].props.onClick();
+    const opened = react.render(element).tree;
+    assert.ok(textOf(opened).includes('修改已完成的任务'), '已完成条目应当打开「修改已完成的任务」弹层');
+  });
+}
+
+group('3c5b. 工单行：修改 / 删除是常显图标');
+{
+  /** 取第 n 行那两个图标按钮（带 props 的对象，便于直接点）。 */
+  function iconButtons(tree) {
+    const found = [];
+    (function walk(node) {
+      if (!node) return;
+      if (node.type === 'button' && /aw-icon-btn/.test(node.props?.className || '')) found.push(node);
+      for (const child of node.children || []) walk(child);
+    })(tree);
+    return found;
+  }
+
+  check('每行两个图标按钮，不再有 ⋯，也不用展开菜单', () => {
+    const { tree } = renderPage('hours');
+    const icons = iconButtons(tree);
+    const rows = views.hours.tickets.length;
+    assert.equal(icons.length, rows * 2, `工单 ${rows} 条，图标按钮 ${icons.length} 个`);
+    assert.ok(!collectButtons(tree).includes('⋯'), '不该再有 ⋯');
+    assert.ok(!findNode(tree, (n) => n.type === 'tr' && n.props?.className === 'aw-table-menu'), '不该再有菜单行');
+    const labels = icons.map((node) => node.props['aria-label']);
+    for (const want of ['修改这张工单', '删除这张工单']) {
+      assert.ok(labels.includes(want), `图标缺少可访问名「${want}」：${JSON.stringify(labels)}`);
+    }
+  });
+
+  check('图标按钮里有 svg 图标，尺寸固定 26×26 便于对齐', () => {
+    const { tree } = renderPage('hours');
+    const icons = iconButtons(tree);
+    assert.ok(icons[0].props.className.includes('aw-icon-btn'));
+    const svg = findNode(icons[0], (n) => n.type === 'svg');
+    assert.ok(svg, '图标按钮里没有 svg');
+    assert.ok(countIn(svg, (n) => n.type === 'path') >= 2, '图标路径太少');
+    const css = cssOf(tree);
+    assert.match(css, /^\.aw-icon-btn\{[^}]*width:30px/m, '图标按钮应当固定宽度');
+  });
+
+  check('点删除图标先就地变确认，不立刻删；确认后才发 ticket_remove', () => {
+    const api = fakeApi('hours', views.hours);
+    react.presets({ WorkPage: { 2: 'hours' } });
+    const element = react.createElement(slots.main.component, { api });
+
+    const first = react.render(element).tree;
+    const trash = iconButtons(first).find((node) => node.props['aria-label'] === '删除这张工单');
+    assert.ok(trash, '找不到删除图标');
+    trash.props.onClick();
+
+    const confirming = react.render(element).tree;
+    const labels = collectButtons(confirming);
+    assert.ok(labels.includes('确认删除'), `应当出现确认按钮：${JSON.stringify(labels)}`);
+    assert.ok(labels.includes('取消'));
+    assert.equal(api.calls.filter((c) => c[0] === 'send').length, 0, '仅仅点删除图标不该发请求');
+
+    findNode(confirming, (n) => n.type === 'button' && textOf(n).trim() === '确认删除').props.onClick();
+    const removes = api.calls.filter((c) => c[0] === 'send' && c[1] === 'ticket_remove');
+    assert.equal(removes.length, 1);
+    assert.ok(removes[0][2].id, 'ticket_remove 必须带 id');
+  });
+
+  check('点取消退回两个图标', () => {
+    const api = fakeApi('hours', views.hours);
+    react.presets({ WorkPage: { 2: 'hours' } });
+    const element = react.createElement(slots.main.component, { api });
+
+    iconButtons(react.render(element).tree).find((n) => n.props['aria-label'] === '删除这张工单').props.onClick();
+    const confirming = react.render(element).tree;
+    findNode(confirming, (n) => n.type === 'button' && textOf(n).trim() === '取消').props.onClick();
+
+    const back = react.render(element).tree;
+    assert.ok(!collectButtons(back).includes('确认删除'), '取消后不该还留着确认按钮');
+    assert.equal(iconButtons(back).length, views.hours.tickets.length * 2, '取消后应当恢复两个图标');
+  });
+
+  check('点修改图标打开工单编辑器，七个字段预填当前值', () => {
+    const api = fakeApi('hours', views.hours);
+    react.presets({ WorkPage: { 2: 'hours' } });
+    const element = react.createElement(slots.main.component, { api });
+
+    iconButtons(react.render(element).tree).find((n) => n.props['aria-label'] === '修改这张工单').props.onClick();
+
+    const opened = react.render(element).tree;
+    const modal = findNode(opened, (n) => n.type === 'div' && n.props?.className === 'aw-modal');
+    assert.ok(modal, '没打开编辑器');
+    assert.ok(textOf(modal).includes('修改工单'));
+    const labels = [];
+    (function walk(node) {
+      if (!node) return;
+      if (node.type === 'label') labels.push(textOf(node).trim());
+      for (const child of node.children || []) walk(child);
+    })(modal);
+    for (const want of ['类型', '日期', '项目', '小时', '问题 / 任务', '链接', '备注']) {
+      assert.ok(labels.includes(want), `缺少「${want}」，现有：${JSON.stringify(labels)}`);
+    }
+    const first = views.hours.tickets[0];
+    assert.ok(findNode(modal, (n) => n.type === 'input' && n.props?.value === first.title), '问题 / 任务没有预填');
+  });
+
+  check('改小时数保存，只发一次 ticket_update 且带上新值', () => {
+    const api = fakeApi('hours', views.hours);
+    react.presets({ WorkPage: { 2: 'hours' } });
+    const element = react.createElement(slots.main.component, { api });
+
+    iconButtons(react.render(element).tree).find((n) => n.props['aria-label'] === '修改这张工单').props.onClick();
+    const opened = react.render(element).tree;
+    const modal = findNode(opened, (n) => n.type === 'div' && n.props?.className === 'aw-modal');
+    findNode(modal, (n) => n.type === 'input' && n.props?.type === 'number').props.onChange({ target: { value: '3' } });
+
+    const after = react.render(element).tree;
+    findNode(findNode(after, (n) => n.props?.className === 'aw-modal'), (n) => n.type === 'button' && textOf(n).trim() === '保存').props.onClick();
+
+    const updates = api.calls.filter((c) => c[0] === 'send' && c[1] === 'ticket_update');
+    assert.equal(updates.length, 1, `应当只发一次，实际：${JSON.stringify(api.calls)}`);
+    assert.equal(updates[0][2].hours, 3);
+    assert.ok(updates[0][2].id, '必须带 id');
+  });
+}
+
+group('3c5. 本月工单表');
+{
+  check('表格列出项目 / 链接 / 任务 / 小时，链接可点', () => {
+    const { tree, text } = renderPage('hours');
+    const table = findNode(tree, (n) => n.type === 'table' && n.props?.className === 'aw-table');
+    assert.ok(table, '找不到工单表');
+    const heads = [];
+    (function walk(node) {
+      if (!node) return;
+      if (node.type === 'th') heads.push(textOf(node).trim());
+      for (const child of node.children || []) walk(child);
+    })(table);
+    assert.deepEqual(heads, ['日期', '类型', '项目', '链接', '问题/任务', '小时', '']);
+    const links = [];
+    (function walk(node) {
+      if (!node) return;
+      if (node.type === 'a') links.push(node.props);
+      for (const child of node.children || []) walk(child);
+    })(table);
+    assert.ok(links.length > 0, '链接列应当渲染成 <a>');
+    assert.match(links[0].href, /^https:\/\//);
+    assert.equal(links[0].target, '_blank');
+    assert.ok(text.includes('密评整改相关优化'));
+    assert.ok(text.includes('无工时'), '无工时的单要显示成「无工时」');
+    assert.ok(text.includes('3h（不改）'), '带备注的小时要带上备注');
+  });
+
+  check('表头写出应出勤 / 100% / 110% 三个数（对齐公司口径）', () => {
+    const { text } = renderPage('hours');
+    assert.match(text, /2026 年 10 月，应出勤 1[0-9] 天，100% 工时 [\d.]+h，110% 工时 [\d.]+h/);
+  });
+
+  check('录入区所有控件高度统一（否则日期框和下拉会参差不齐）', () => {
+    const { tree } = renderPage('hours');
+    const css = cssOf(tree);
+    assert.match(css, /--ctl-h:50px/, '控件高度应当是单一令牌');
+    assert.match(css, /^\.aw-input,\.aw-select,\.aw-textarea\{[^}]*height:var\(--ctl-h\)/m, '控件应当共用同一个高度令牌');
+    assert.match(css, /^\.aw-input\[type=date\],\.aw-input\[type=number\]\{height:var\(--ctl-h\)\}/m, '日期框要单独压平');
+    assert.match(css, /^\.aw-ticket-form \.aw-btn\{[^}]*height:var\(--ctl-h\)/m, '栅格里的按钮也要对齐');
+  });
+
+  check('底部给出工单合计与本月已录 / 必须 / 缺口', () => {
+    const { text } = renderPage('hours');
+    assert.match(text, /工单合计 [\d.]+h/);
+    assert.match(text, /本月已录 [\d.]+h \/ 必须 [\d.]+h/);
+  });
+
+  check('工时页没有工单时给出提示，而不是空白表', () => {
+    const empty = JSON.parse(JSON.stringify(views.hours));
+    empty.tickets = [];
+    empty.ticketHours = 0;
+    const api = fakeApi('hours', empty);
+    react.presets({ WorkPage: { 2: 'hours' } });
+    const { tree } = react.render(react.createElement(slots.main.component, { api }));
+    const text = textOf(tree);
+    assert.ok(text.includes('本月还没有工单'), '空状态没有提示');
+    assert.ok(!findNode(tree, (n) => n.type === 'table' && n.props?.className === 'aw-table'), '空状态不该渲染空表');
+  });
+}
+
+group('3c6. 项目页：能新建也能改');
+{
+  check('每个项目卡片都有「编辑」按钮', () => {
+    const { tree } = renderPage('projects');
+    const projects = views.projects;
+    assert.ok(projects.length > 0, '夹具里没有项目');
+    const edits = countIn(tree, (n) => n.type === 'button' && textOf(n).trim() === '编辑');
+    assert.equal(edits, projects.length, `项目 ${projects.length} 个，编辑按钮 ${edits} 个`);
+  });
+
+  check('点「编辑」打开弹层，只剩 项目名 / 状态 / 说明', () => {
+    const api = fakeApi('projects', views.projects);
+    react.presets({ WorkPage: { 2: 'projects' } });
+    const element = react.createElement(slots.main.component, { api });
+
+    const first = react.render(element).tree;
+    const edit = findNode(first, (n) => n.type === 'button' && textOf(n).trim() === '编辑');
+    assert.ok(edit, '找不到编辑按钮');
+    edit.props.onClick();
+
+    const opened = react.render(element).tree;
+    const modal = findNode(opened, (n) => n.type === 'div' && n.props?.className === 'aw-modal');
+    assert.ok(modal, '没打开弹层');
+    assert.ok(textOf(modal).includes('修改项目'));
+    const labels = [];
+    (function walk(node) {
+      if (!node) return;
+      if (node.type === 'label') labels.push(textOf(node).trim());
+      for (const child of node.children || []) walk(child);
+    })(modal);
+    assert.deepEqual(labels, ['项目名', '状态', '说明'], `弹层字段不对：${JSON.stringify(labels)}`);
+    const nameInput = findNode(modal, (n) => n.type === 'input' && n.props?.value === views.projects[0].name);
+    assert.ok(nameInput, '项目名没有预填当前值');
+  });
+
+  check('改名后保存，只发一次 project_update 且带 id 与新名字', () => {
+    const api = fakeApi('projects', views.projects);
+    react.presets({ WorkPage: { 2: 'projects' } });
+    const element = react.createElement(slots.main.component, { api });
+
+    findNode(react.render(element).tree, (n) => n.type === 'button' && textOf(n).trim() === '编辑').props.onClick();
+    const opened = react.render(element).tree;
+    const modal = findNode(opened, (n) => n.type === 'div' && n.props?.className === 'aw-modal');
+    const nameInput = findNode(modal, (n) => n.type === 'input' && n.props?.value === views.projects[0].name);
+    nameInput.props.onChange({ target: { value: '改过的项目名' } });
+
+    const after = react.render(element).tree;
+    const save = findNode(findNode(after, (n) => n.props?.className === 'aw-modal'), (n) => n.type === 'button' && textOf(n).trim() === '保存');
+    assert.equal(save.props.disabled, false);
+    save.props.onClick();
+
+    const updates = api.calls.filter((c) => c[0] === 'send' && c[1] === 'project_update');
+    assert.equal(updates.length, 1, `应当只发一次，实际：${JSON.stringify(api.calls)}`);
+    assert.equal(updates[0][2].name, '改过的项目名');
+    assert.ok(updates[0][2].id, '必须带 id');
+  });
+
+  check('项目卡片改成宽栅格，指标用 chip 排（不再挤成一行字）', () => {
+    const { tree } = renderPage('projects');
+    const css = cssOf(tree);
+    assert.match(css, /^\.aw-grid\{[^}]*minmax\(3[0-9]{2}px/m, '项目栅格应当放宽到 300px 以上');
+    // 「新建项目」表单只剩一个项目名输入框
+    const text = textOf(tree);
+    assert.ok(text.includes('项目名'), '新建表单缺少「项目名」字段名');
+  });
+}
+
+group('3c7. 项目表单只留必要字段');
+{
+  /** 取某张卡片的字段名。 */
+  function labelsOf(node) {
+    const out = [];
+    (function walk(item) {
+      if (!item) return;
+      if (item.type === 'label') out.push(textOf(item).trim());
+      for (const child of item.children || []) walk(child);
+    })(node);
+    return out;
+  }
+
+  check('新建表单只有「项目名」', () => {
+    const { tree } = renderPage('projects');
+    const card = findNode(tree, (n) => n.type === 'div' && /aw-card/.test(n.props?.className || '') && textOf(n).includes('新建项目'));
+    assert.ok(card, '找不到「新建项目」卡片');
+    assert.deepEqual(labelsOf(card), ['项目名']);
+    for (const gone of ['图标', '代号', '负责人', '启动日', '结束日']) {
+      assert.ok(!labelsOf(card).includes(gone), `新建表单不该再有「${gone}」`);
+    }
+  });
+
+  check('编辑弹层只有 项目名 / 状态 / 说明', () => {
+    const api = fakeApi('projects', views.projects);
+    react.presets({ WorkPage: { 2: 'projects' } });
+    const element = react.createElement(slots.main.component, { api });
+    findNode(react.render(element).tree, (n) => n.type === 'button' && textOf(n).trim() === '编辑').props.onClick();
+
+    const opened = react.render(element).tree;
+    const modal = findNode(opened, (n) => n.type === 'div' && n.props?.className === 'aw-modal');
+    assert.ok(modal, '没打开弹层');
+    assert.deepEqual(labelsOf(modal), ['项目名', '状态', '说明']);
+    for (const gone of ['图标', '代号', '负责人', '启动日', '结束日']) {
+      assert.ok(!labelsOf(modal).includes(gone), `编辑弹层不该再有「${gone}」`);
+    }
+  });
+
+  check('保存时只提交 name / description / status，不带被删掉的字段', () => {
+    const api = fakeApi('projects', views.projects);
+    react.presets({ WorkPage: { 2: 'projects' } });
+    const element = react.createElement(slots.main.component, { api });
+    findNode(react.render(element).tree, (n) => n.type === 'button' && textOf(n).trim() === '编辑').props.onClick();
+
+    const opened = react.render(element).tree;
+    const modal = findNode(opened, (n) => n.type === 'div' && n.props?.className === 'aw-modal');
+    findNode(modal, (n) => n.type === 'input' && n.props?.value === views.projects[0].name).props.onChange({ target: { value: '改过的项目名' } });
+
+    const after = react.render(element).tree;
+    findNode(findNode(after, (n) => n.props?.className === 'aw-modal'), (n) => n.type === 'button' && textOf(n).trim() === '保存').props.onClick();
+
+    const updates = api.calls.filter((c) => c[0] === 'send' && c[1] === 'project_update');
+    assert.equal(updates.length, 1);
+    const payload = updates[0][2];
+    assert.equal(payload.name, '改过的项目名');
+    for (const gone of ['emoji', 'code', 'owner', 'startedAt', 'endedAt']) {
+      assert.ok(!(gone in payload), `payload 里不该再带 ${gone}：${JSON.stringify(payload)}`);
+    }
+  });
+
+  check('新建时只提交 name', () => {
+    const api = fakeApi('projects', views.projects);
+    react.presets({ WorkPage: { 2: 'projects' } });
+    const element = react.createElement(slots.main.component, { api });
+    const first = react.render(element).tree;
+    findNode(first, (n) => n.type === 'input' && n.props?.placeholder === '例如：示例政务客户二期').props.onChange({ target: { value: '新项目' } });
+    const ready = react.render(element).tree;
+    findNode(ready, (n) => n.type === 'button' && textOf(n).trim() === '新建').props.onClick();
+
+    const creates = api.calls.filter((c) => c[0] === 'send' && c[1] === 'project_create');
+    assert.equal(creates.length, 1);
+    assert.deepEqual(creates[0][2], { name: '新项目' });
+  });
+}
+
+group('3c9. 工单工时上限 300h');
+{
+  check('录入框与编辑器都用「最大 300h」，不是 24', () => {
+    const { tree } = renderPage('hours');
+    const numbers = [];
+    (function walk(node) {
+      if (!node) return;
+      if (node.type === 'input' && node.props?.type === 'number' && node.props?.step === 0.5) numbers.push(node);
+      for (const child of node.children || []) walk(child);
+    })(tree);
+    assert.ok(numbers.length >= 1, '找不到工时的数字输入框');
+    for (const input of numbers) {
+      assert.equal(String(input.props.max), '300', `工时输入框上限应当是 300，实际 ${input.props.max}`);
+    }
+    assert.ok(textOf(tree).includes('300') || numbers[0].props.title.includes('300'), '应当提示最多 300h');
+  });
+
+  check('填 300 能被接受，填 301 会被拦在前端', () => {
+    const api = fakeApi('hours', views.hours);
+    react.presets({ WorkPage: { 2: 'hours' } });
+    const element = react.createElement(slots.main.component, { api });
+    // 每次 onChange 之后都要重新渲染再取下一个 handler，否则闭包里的 draft 是旧的，后一次会覆盖前一次
+    findNode(react.render(element).tree, (n) => n.type === 'input' && n.props?.placeholder === '这条单在做什么')
+      .props.onChange({ target: { value: '批量派发' } });
+    findNode(react.render(element).tree, (n) => n.type === 'input' && n.props?.type === 'number' && n.props?.step === 0.5)
+      .props.onChange({ target: { value: '300' } });
+
+    const ready = react.render(element).tree;
+    findNode(ready, (n) => n.type === 'button' && textOf(n).trim() === '记工单').props.onClick();
+    const creates = api.calls.filter((c) => c[0] === 'send' && c[1] === 'ticket_add');
+    assert.equal(creates.length, 1, `应当发一次，实际 ${JSON.stringify(api.calls)}`);
+    assert.equal(creates[0][2].hours, 300, '300 要原样发出去');
+  });
+}
+
+group('3g2. 分页条永远看得见');
+{
+  check('分页永远可见：桌面在左栏竖排，窄屏降级成常驻横条', () => {
+    const css = cssOf(renderPage('today').tree) || '';
+    const rail = (css.match(/^\.aw-rail\{[^}]*\}/m) || [])[0];
+    assert.ok(rail, '找不到 .aw-rail 规则');
+    assert.match(rail, /flex:0 0 232px/, `左栏应当固定宽度：${rail}`);
+    // 窄屏时左栏变成贴顶的横条，分页不会跟着内容滚走
+    const narrow = css.slice(css.indexOf('@media (max-width:1080px)'));
+    assert.match(narrow, /\.aw-rail\{[^}]*position:sticky/m, '窄屏左栏应当贴顶常驻');
+    assert.match(narrow, /\.aw-tabs\{flex-direction:row/, '窄屏分页应当横排');
+  });
+
+  check('五个分页一个不少，顺序固定', () => {
+    const { tree } = renderPage('today');
+    const labels = [];
+    (function walk(node) {
+      if (!node) return;
+      if (node.type === 'button' && /aw-tab( |$)/.test(String(node.props?.className || ''))) labels.push(textOf(node).trim());
+      for (const child of node.children || []) walk(child);
+    })(tree);
+    assert.deepEqual(labels, ['今日', '项目', '工时', '报表', '统计']);
+  });
+}
+
+group('3c8. 今日页「历史完成」');
+{
+  check('本周完成下面有一节「历史完成」，只列本周之前的', () => {
+    const { tree, text } = renderPage('today');
+    const secs = [];
+    (function walk(node) {
+      if (!node) return;
+      if (node.type === 'section' && /aw-sec/.test(node.props?.className || '')) secs.push(textOf(node).replace(/\s+/g, ' ').trim());
+      for (const child of node.children || []) walk(child);
+    })(tree);
+    assert.equal(secs.length, 3, `应当是三节，实际 ${secs.length}`);
+    assert.ok(secs[2].startsWith('历史完成'), `第三节应当是历史完成，实际：${secs[2].slice(0, 20)}`);
+    assert.ok(text.includes('历史完成'), '缺少历史完成');
+
+    // 历史完成里不能混进本周的
+    const week = views.today.week;
+    for (const todo of views.today.historyDone) {
+      assert.ok(todo.completedDate < week.from, `历史完成里混进了本周的「${todo.title}」（${todo.completedDate}）`);
+    }
+  });
+
+  check('宿主把「本周之前完成」算进 historyDone，本周之前的都算', () => {
+    const view = views.today;
+    assert.ok(Array.isArray(view.historyDone), 'historyDone 必须是数组');
+    assert.equal(view.historyTotal, view.historyDone.length, '夹具里条数不多，应当全部带回来');
+    assert.ok(view.historyTotal > 0, '夹具里应当有历史完成，否则这条用例是空转');
+    // 按完成日倒序
+    const dates = view.historyDone.map((item) => item.completedDate);
+    assert.deepEqual(dates, dates.slice().sort().reverse(), `historyDone 应当按完成日倒序：${JSON.stringify(dates)}`);
+  });
+
+  check('超过 8 条时先折叠，点「展开全部」才铺开', () => {
+    // 造 12 条历史完成
+    const many = Array.from({ length: 12 }, (_, index) => ({
+      id: `h${index}`,
+      title: `历史事项 ${index}`,
+      status: 'done',
+      completedDate: `2026-09-${String(10 + index).padStart(2, '0')}`,
+      projectName: '订单中台',
+    }));
+    const view = { ...views.today, historyDone: many, historyTotal: 12 };
+    const api = fakeApi('today', view);
+    react.presets({ WorkPage: { 2: 'today' } });
+    const element = react.createElement(slots.main.component, { api });
+
+    const collapsed = react.render(element).tree;
+    assert.ok(textOf(collapsed).includes('历史事项 0'), '应当露出最早的几条');
+    assert.ok(!textOf(collapsed).includes('历史事项 11'), '第 12 条默认不该出现');
+    assert.ok(textOf(collapsed).includes('展开全部 12 条'), '应当给出展开入口');
+
+    findNode(collapsed, (n) => n.type === 'button' && textOf(n).trim().startsWith('展开全部')).props.onClick();
+    const expanded = react.render(element).tree;
+    assert.ok(textOf(expanded).includes('历史事项 11'), '展开后应当全部铺开');
+    assert.ok(textOf(expanded).includes('收起'), '展开后应当能收起');
+  });
+
+  check('没有历史完成时给出空态文案，不是一片空白', () => {
+    const view = { ...views.today, historyDone: [], historyTotal: 0 };
+    const api = fakeApi('today', view);
+    react.presets({ WorkPage: { 2: 'today' } });
+    const text = textOf(react.render(react.createElement(slots.main.component, { api })).tree);
+    assert.ok(text.includes('历史完成'), '这一节仍然要在');
+    assert.match(text, /还没有完成过|还没有更早的完成记录/, '缺少空态文案');
+  });
+}
+
+group('3d. 待办行的排版约束（一行放下 + 边框可见）');
+{
+  /** 从渲染树里把 <style> 的内容取出来（含 dangerouslySetInnerHTML 写法）。 */
+  const styleOf = (tree) => cssOf(tree);
+
+  const css = styleOf(renderPage('today').tree) || '';
+
+  check('待办行是横向一行，不是标题/元信息分两行的纵向布局', () => {
+    const rule = (css.match(/^\.aw-row-main\{[^}]*\}/m) || [])[0];
+    assert.ok(rule, '找不到 .aw-row-main 规则');
+    assert.doesNotMatch(rule, /flex-direction:column/, `.aw-row-main 又变成纵向了：${rule}`);
+    assert.match(rule, /display:flex/);
+  });
+
+  check('行与行之间有一条常显的细线（不是靠 hover 才看得出来）', () => {
+    // 台账式列表：不再给每行套一个圆角盒子，改成相邻行之间一条持续的细线
+    assert.match(css, /^\.aw-list>\.aw-row\+\.aw-row\{border-top:1px solid var\(--rule\)\}/m, '相邻行之间缺少细线');
+    const rule = (css.match(/^\.aw-row\{[^}]*\}/m) || [])[0];
+    assert.ok(rule, '找不到 .aw-row 规则');
+    assert.doesNotMatch(rule, /background:var\(--aw-panel\)/, '行不该再各自成一个色块');
+  });
+
+  check('三套皮肤各自声明完整的一色一变量，正文里不出现字面量颜色', () => {
+    for (const skin of ['lido', 'dusk', 'jade']) {
+      assert.match(css, new RegExp(`\\.aw-page\\[data-skin="${skin}"\\]\\{`), `缺少皮肤 ${skin}`);
+    }
+    // --paper / --ink / --accent 等核心变量每套都要有
+    for (const variable of ['--paper:', '--ink:', '--accent:', '--rule:', '--field-line:', '--glass:']) {
+      const count = css.split(variable).length - 1;
+      assert.ok(count >= 3, `${variable} 应当在三套皮肤里都声明，实际 ${count} 处`);
+    }
+    const body = css.slice(css.indexOf('.aw-page{'));
+    assert.ok(!/#[0-9a-fA-F]{3,6}\b/.test(body.split('.aw-page[data-skin="dusk"]')[0]), '皮肤块外面不该有十六进制颜色');
+  });
+
+  check('行高 46px（Horizon 的行距）', () => {
+    assert.match(css, /^\.aw-row\{[^}]*min-height:46px/m);
+    assert.match(css, /^\.aw-row\{[^}]*padding:10px 10px/m);
+  });
+
+  check('标题吃满剩余宽度、元信息与操作靠右，右侧不留空白', () => {
+    const title = (css.match(/^\.aw-row-title\{[^}]*\}/m) || [])[0];
+    const meta = (css.match(/^\.aw-row-meta\{[^}]*\}/m) || [])[0];
+    assert.match(title, /flex:1 1 auto/, `标题应吃满剩余宽度：${title}`);
+    assert.match(css, /^\.aw-row-main>\.aw-row-meta\{justify-content:flex-end\}/m, '行内元信息应靠右');
+  });
+}
+
+group('4b. 空按钮回归（任何 button 都必须有文案）');
+{
+  const tabs = ['today', 'projects', 'hours', 'reports', 'stats'];
+
+  check('六个分页里没有一个空按钮', () => {
+    const problems = [];
+    for (const tab of tabs) {
+      const { tree } = renderPage(tab);
+      const labels = collectButtons(tree);
+      const empty = labels.filter((label) => label === '');
+      if (empty.length > 0) problems.push(`${tab}: ${empty.length} 个空按钮（共 ${labels.length} 个）`);
+    }
+    assert.deepEqual(problems, [], problems.join('；'));
+  });
+
+  check('设置弹层里也没有空按钮', () => {
+    const problems = [];
+    const settings = renderPage('hours', { WorkPage: { 2: 'hours', 3: '2026-10', 4: true } });
+    const emptySettings = collectButtons(settings.tree).filter((label) => label === '');
+    if (emptySettings.length > 0) problems.push(`设置弹层: ${emptySettings.length} 个`);
+    assert.deepEqual(problems, [], problems.join('；'));
+  });
+
+  check('项目页「新建项目」按钮带着「新建」文案', () => {
+    const { tree, text } = renderPage('projects');
+    assert.ok(text.includes('新建'), '缺少「新建」文案');
+    const labels = collectButtons(tree);
+    assert.ok(labels.some((label) => label === '新建'), `按钮文案里没有「新建」：${JSON.stringify(labels)}`);
+  });
+
+  check('工时页带有 +1h/+2h/+4h/+7.5h 的地方在工时台账里（今日页已经没有）', () => {
+    const todayLabels = collectButtons(renderPage('today').tree);
+    for (const gone of ['+1h', '+2h', '+4h', '+7.5h']) {
+      assert.ok(!todayLabels.includes(gone), `今日页不该再有「${gone}」`);
+    }
+  });
+}
+
+group('5. 组件不会在渲染期偷偷发请求');
+{
+  check('渲染只触发 open/refreshBoot 这类只读副作用', () => {
+    const { api } = renderPage('today');
+    const writes = api.calls.filter((call) => call[0] === 'send');
+    assert.equal(writes.length, 0, `渲染期发生了写操作：${JSON.stringify(writes)}`);
+  });
+
+  check('六个分页的渲染副作用都是只读的', () => {
+    for (const tab of ['today', 'projects', 'hours', 'reports', 'stats']) {
+      const { api } = renderPage(tab);
+      const writes = api.calls.filter((call) => call[0] === 'send');
+      assert.equal(writes.length, 0, `${tab} 渲染期发生了写操作：${JSON.stringify(writes)}`);
+    }
+  });
+}
+
+/* ------------------------------------------------------------------ */
+
+globalThis.setInterval = realSetInterval;
+globalThis.clearInterval = realClearInterval;
+
+console.log(`\n${'─'.repeat(64)}`);
+if (failures.length === 0) {
+  console.log(`✅ 全部通过：${passed} 项断言（渲染实例 ${react.instanceCount()} 个）`);
+} else {
+  console.log(`❌ ${failures.length} 项失败 / 共 ${passed + failures.length} 项`);
+  for (const item of failures) {
+    console.log(`\n  ✗ ${item.label}\n${item.error.stack}`);
+  }
+}
+rmSync(ROOT, { recursive: true, force: true });
+process.exit(failures.length === 0 ? 0 : 1);
