@@ -42,7 +42,7 @@ await page.goto("http://127.0.0.1:8791/");
 await page.waitForFunction(() => window.__ready === true, undefined, { timeout: 20000 });
 
 // 来回切分页，反复走「跨分页数据错配」这条最容易崩的路径
-for (let i = 0; i < 6; i++) {
+for (let i = 0; i < 4; i++) {
   await page.click(`loc=css:.aw-tabs button >> nth=${i}`);
   await page.waitForTimeout(800);
   console.log(i, await page.evaluate(() => window.__errors.slice(0, 3)));
@@ -56,5 +56,5 @@ for (let i = 0; i < 6; i++) {
 | `server.mjs` | 真 Host 半体 + 静态站点 + 原样提供 `client.js` |
 | `entry.js` | 浏览器侧入口：错误捕获 + 装配 `__ModuleLoader__` + 挂载面板 |
 | `build.mjs` | 用 esbuild 把 entry.js 和真 React 打成 `site/bundle.js` |
-| `seed.mjs` | 通过真实 API 灌示例数据（含顺延、逾期、积压、请假、报表） |
+| `seed.mjs` | 通过真实 API 灌示例数据（含顺延、逾期、积压、报表） |
 | `site/index.html` | 宿主页面（补齐 `--dsw-alias-*` 主题令牌，让外观接近 DSH） |

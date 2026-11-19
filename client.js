@@ -5,7 +5,7 @@
  *   - sidebar.panellist / id = ai-workbench  → 左侧全局面板图标
  *   - main / key = ai-workbench              → 中央整页工作台
  *
- * 六个分页：今日 / 待办 / 项目 / 工时 / 报表 / 统计（设置是右上角的齿轮弹层）。
+ * 四个分页：今日 / 项目 / 报表 / 统计（设置是右上角的齿轮弹层）。
  * 所有数据都来自 Host 半体的 /ai-workbench/api；本文件只负责呈现与交互，
  * **不重复计算任何口径**（完成率、达成率、缺口都由 Host 算好）。
  * 样式只用 --dsw-alias-* 主题令牌（产品品牌色除外），明暗主题自动跟随。
@@ -46,7 +46,7 @@ window.__ModuleLoader__.load({
     const BUILD = 'v1.0.0 · 2026-11-19';
 
     /** 每个分页的页标题（对应参考稿里的「Main Dashboard」）。 */
-    const TAB_TITLE = { today: '今天', projects: '项目', hours: '工时', reports: '报表', stats: '统计' };
+    const TAB_TITLE = { today: '今天', projects: '项目', reports: '报表', stats: '统计' };
 
     /** 可切换的皮肤。horizon 是 Pixso 参考稿那套；其余三套之前做过。 */
     const SKINS = [
@@ -68,14 +68,8 @@ window.__ModuleLoader__.load({
       return 'horizon';
     }
 
-    /** 单条工单的工时上限（与宿主 MAX_TICKET_HOURS 一致）。 */
-    const MAX_TICKET_HOURS = 300;
-
     /** 「历史完成」先露多少条，其余点「展开全部」。 */
     const HISTORY_PAGE = 8;
-
-    /** 工单类型的默认候选项（与宿主 lib/state.js 的 TICKET_TYPES 保持一致）。 */
-    const TICKET_TYPES = ['任务', '其他'];
 
     /** 表单一行的图例文案。 */
     const PRIORITY_LEGEND = PRIORITIES.map((value) => `${value} ${PRIORITY_INFO[value].short}`).join(' · ');
@@ -92,18 +86,6 @@ window.__ModuleLoader__.load({
       const d = new Date();
       const p = (n) => String(n).padStart(2, '0');
       return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-    }
-
-    /** 月份键 YYYY-MM。 */
-    function monthOf(key) {
-      return String(key).slice(0, 7);
-    }
-
-    /** 月份平移。 */
-    function shiftMonth(ym, delta) {
-      const [y, m] = String(ym).split('-').map(Number);
-      const total = y * 12 + (m - 1) + delta;
-      return `${Math.floor(total / 12)}-${String(((total % 12) + 12) % 12 + 1).padStart(2, '0')}`;
     }
 
     /** 日期平移。 */
@@ -123,13 +105,6 @@ window.__ModuleLoader__.load({
       const dt = new Date(iso);
       if (Number.isNaN(dt.getTime())) return '--:--';
       return `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
-    }
-
-    /** 小时数格式化。 */
-    function fmtHours(value) {
-      const n = Math.round((Number(value) || 0) * 100) / 100;
-      if (Number.isInteger(n)) return `${n}h`;
-      return `${n.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}h`;
     }
 
     /** 百分比。 */
@@ -154,7 +129,7 @@ const CSS = `
  * sweep: 4 FAIL (gate 40, 输入框描边 1.26:1) — 用户明确要求照抄参考稿的 #E0E5F2，属有意偏离，非漏改
  * 其余 0 REFLEX · 0 WARN (app scope, 20 route×skin) · copy: verbatim · 可读性由「字段上方标签 + 占位符」承担
  * 与参考的偏差：参考用紫蓝渐变做「Upgrade to PRO」卡与柱图，这里一律用实色靛蓝（Hallmark 2a 禁紫蓝渐变） */
-/* Hallmark · pre-emit critique: P4 H5 E4 S4 R4 V4 · weakest: P (这是模板化的后台语言) — 用「今日待办」做唯一的大数字、把工时缺口放进侧栏，让首屏仍回答「今天做什么」 */
+/* Hallmark · pre-emit critique: P4 H5 E4 S4 R4 V4 · weakest: P (这是模板化的后台语言) — 用「今日待办」做唯一的大数字、把今日待办放进侧栏，让首屏仍回答「今天做什么」 */
 
 /* ── 皮肤：颜色只在这些块里出现 ─────────────────────────────── */
 .aw-page[data-skin="horizon"]{
@@ -516,11 +491,6 @@ const CSS = `
   .aw-set-figs{justify-content:flex-start}
 }
 
-.aw-ticket-form{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px;align-items:end}
-.aw-ticket-form .aw-field>label{white-space:nowrap}
-.aw-ticket-form .aw-btn{height:var(--ctl-h)}
-@media (max-width:860px){.aw-ticket-form{grid-template-columns:repeat(4,minmax(0,1fr))}.aw-ticket-form .aw-field{grid-column:span 4!important}}
-
 .aw-rep{display:flex;align-items:baseline;gap:12px;padding:14px 12px;border-radius:var(--r-inner);cursor:pointer;border:0;background:transparent;
   border-top:1px solid var(--rule);width:100%;text-align:left;font:inherit;color:inherit}
 .aw-rep:first-child{border-top:0}
@@ -775,7 +745,6 @@ const CSS = `
     const NAV_ICONS = {
       today: ['M3 7.5 8 3l5 4.5', 'M4.5 7v6.5h7V7', 'M6.5 13.5v-3.2h3v3.2'],
       projects: ['M2.8 4.6h4l1.2 1.6h5.2v6.2H2.8z'],
-      hours: ['M8 2.8a5.2 5.2 0 1 0 0 10.4A5.2 5.2 0 0 0 8 2.8z', 'M8 5.2V8l2 1.3'],
       reports: ['M4 2.8h6l2.2 2.2v8.2H4z', 'M9.6 2.9v2.4h2.4', 'M6 8h4', 'M6 10.4h4'],
       stats: ['M3 12.8V8.2', 'M6.3 12.8V4.8', 'M9.6 12.8V7', 'M12.9 12.8v-6'],
     };
@@ -853,7 +822,7 @@ const CSS = `
     function iconForLabel(label) {
       const text = String(label || '');
       if (/率|缺口|差|节拍/.test(text)) return 'chart';
-      if (/工时|小时/.test(text)) return 'clock';
+      if (/截止|提醒/.test(text)) return 'clock';
       if (/逾期|超期/.test(text)) return 'alert';
       if (/草稿|报表/.test(text)) return 'draft';
       if (/积压|顺延/.test(text)) return 'backlog';
@@ -1059,7 +1028,7 @@ const CSS = `
      *   1. 今日待办（积压折叠在它下面，不单独占节）
      *   2. 新增待办（含重复任务模板的管理）
      *   3. 本周完成（绿色打勾）
-     * 工时相关的一切都不在这里 —— 那是「工时」页的事。
+     * 这一屏只回答「今天做什么」。
      */
     function TodayTab(props) {
       const api = props.api;
@@ -1093,15 +1062,13 @@ const CSS = `
           icon: 'alert',
           tone: view.stats.overdueCount > 0 ? 'danger' : undefined,
         },
-        boot
-          ? {
-              label: `已录工时 · ${boot.hours.label}`,
-              value: fmtHours(boot.hours.loggedHours),
-              unit: `/ ${fmtHours(boot.hours.requiredHours)}`,
-              hint: `达成 ${pctText(boot.hours.achievement)}`,
-              icon: 'clock',
-            }
-          : null,
+        {
+          label: '今日待办',
+          value: String(view.stats.plannedCount),
+          unit: '项',
+          hint: view.stats.carriedCount > 0 ? `其中顺延 ${view.stats.carriedCount}` : null,
+          icon: 'backlog',
+        },
         boot && boot.counts.draftReports > 0
           ? { label: '待归档草稿', value: String(boot.counts.draftReports), unit: '份', icon: 'draft' }
           : { label: '积压', value: String(view.stats.backlogCount), unit: '项', icon: 'backlog' },
@@ -1423,7 +1390,6 @@ const CSS = `
               `顺延 ${todo.rolloverCount} 天`,
             )
           : null,
-        todo.estimateHours ? h('span', { key: 'est' }, `预估 ${fmtHours(todo.estimateHours)}`) : null,
         todo.progress > 0 && todo.progress < 100
           ? h('span', { key: 'prog', title: '完成度（用于周报）' }, `${todo.progress}%`)
           : null,
@@ -1597,7 +1563,6 @@ const CSS = `
         note: item.note || '',
         projectId: item.projectId || '',
         priority: item.priority || 'P2',
-        estimateHours: item.estimateHours === null || item.estimateHours === undefined ? '' : String(item.estimateHours),
         plannedDate: item.plannedDate || '',
         dueDate: item.dueDate || '',
         progress: String(item.progress ?? 0),
@@ -1618,7 +1583,6 @@ const CSS = `
           note: draft.note,
           projectId: draft.projectId,
           priority: draft.priority,
-          estimateHours: draft.estimateHours === '' ? null : Number(draft.estimateHours),
           dueDate: draft.dueDate,
           rollover: draft.rollover,
         };
@@ -1722,20 +1686,6 @@ const CSS = `
             ),
             h(
               Field,
-              { label: '预估工时' },
-              h('input', {
-                className: 'aw-input',
-                type: 'number',
-                min: 0,
-                max: 24,
-                step: 0.5,
-                placeholder: '—',
-                value: draft.estimateHours,
-                onChange: (event) => set({ estimateHours: event.target.value }),
-              }),
-            ),
-            h(
-              Field,
               { label: done ? '完成度（已完成固定 100%）' : '完成度 %' },
               h('input', {
                 className: 'aw-input',
@@ -1775,7 +1725,6 @@ const CSS = `
         title: '',
         projectId: '',
         priority: 'P2',
-        estimateHours: '',
         plannedDate: localToday(),
         repeatOn: false,
         freq: 'workdays',
@@ -1807,8 +1756,7 @@ const CSS = `
             title: draft.title,
             projectId: draft.projectId || null,
             priority: draft.priority,
-            estimateHours: draft.estimateHours === '' ? null : Number(draft.estimateHours),
-            plannedDate: draft.plannedDate,
+              plannedDate: draft.plannedDate,
             repeat,
             rollover: draft.rollover,
           })
@@ -1851,20 +1799,6 @@ const CSS = `
             { className: 'aw-select', value: draft.priority, title: PRIORITY_TIP, onChange: (event) => set({ priority: event.target.value }) },
             PRIORITIES.map((value) => h('option', { key: value, value }, `${value} · ${PRIORITY_INFO[value].short}`)),
           ),
-        ),
-        h(
-          Field,
-          { label: '预估工时' },
-          h('input', {
-            className: 'aw-input',
-            type: 'number',
-            min: 0,
-            max: 24,
-            step: 0.5,
-            placeholder: '预估 h',
-            value: draft.estimateHours,
-            onChange: (event) => set({ estimateHours: event.target.value }),
-          }),
         ),
         h(
           Field,
@@ -2075,7 +2009,7 @@ const CSS = `
             h(Btn, { tone: 'ghost', onClick: onClose }, '取消'),
             h(Btn, { tone: 'primary', disabled: busy || !draft.name.trim(), onClick: save }, '保存'),
           ),
-          h('div', { className: 'aw-note' }, '改名不会影响已经挂在这个项目下的待办和工单，它们跟着 id 走。'),
+          h('div', { className: 'aw-note' }, '改名不会影响已经挂在这个项目下的待办，它们跟着 id 走。'),
         ),
       );
     }
@@ -2121,7 +2055,7 @@ const CSS = `
         }),
 
         view.length === 0
-          ? h(Card, { children: h(Empty, null, '还没有项目。建一个，把待办和工单挂上去。') })
+          ? h(Card, { children: h(Empty, null, '还没有项目。建一个，把待办挂上去。') })
           : h(
               'div',
               { className: 'aw-grid' },
@@ -2163,7 +2097,6 @@ const CSS = `
                       'div',
                       { className: 'aw-chips' },
                       h(Chip, { children: `进行中 ${project.openCount}` }),
-                      h(Chip, { children: `投入 ${fmtHours(project.hours)}` }),
                       project.carriedCount > 0 ? h(Chip, { tone: 'warn', children: `顺延 ${project.carriedCount}` }) : null,
                       project.overdueCount > 0 ? h(Chip, { tone: 'danger', children: `逾期 ${project.overdueCount}` }) : null,
                       project.lastActivity ? h(Chip, { children: `最近 ${project.lastActivity.slice(5)}` }) : null,
@@ -2214,407 +2147,6 @@ const CSS = `
     function monthParams() {
       const today = localToday();
       return { date: today };
-    }
-
-    /* ================= 工时 ================= */
-
-    function HoursTab(props) {
-      const api = props.api;
-      const view = props.view;
-      const busy = props.busy;
-      // 工单录入草稿（日期默认今天，小时留空 = 无工时）
-      const [ticketDraft, setTicketDraft] = React.useState({ type: '', date: localToday(), projectId: '', url: '', title: '', hours: '', note: '' });
-      // 工单行：哪一条正在二次确认删除 / 哪一条正在编辑
-      const [ticketConfirm, setTicketConfirm] = React.useState(null);
-      const [editingTicket, setEditingTicket] = React.useState(null);
-      const month = props.month;
-      const projects = (props.boot && props.boot.projects) || [];
-
-      if (
-        !view ||
-        !Array.isArray(view.days) ||
-        view.days.length === 0 ||
-        !view.coverage ||
-        !Array.isArray(view.trend) ||
-        !Array.isArray(view.byProject) ||
-        !Array.isArray(view.tickets)
-      ) {
-        return h(Empty, null, '加载中…');
-      }
-
-      /** 记一条工单；填了小时就会自动进工时台账。 */
-      const addTicket = () => {
-        if (!ticketDraft.title.trim()) return;
-        api
-          .send('ticket_add', {
-            type: ticketDraft.type,
-            date: ticketDraft.date || localToday(),
-            projectId: ticketDraft.projectId || null,
-            url: ticketDraft.url,
-            title: ticketDraft.title,
-            hours: ticketDraft.hours === '' ? null : Number(ticketDraft.hours),
-            note: ticketDraft.note,
-          })
-          .then((result) => {
-            if (result.ok) setTicketDraft({ ...ticketDraft, title: '', url: '', hours: '', note: '' });
-          });
-      };
-
-      const leading = (view.days[0].weekday + 6) % 7;
-      const cells = [];
-      for (let i = 0; i < leading; i += 1) cells.push(null);
-      for (const day of view.days) cells.push(day);
-
-      return h(
-        'div',
-        { style: { display: 'flex', flexDirection: 'column', gap: 14 } },
-        h(Card, {
-          title: h(
-            'span',
-            { className: 'aw-split-row' },
-            h(Btn, { small: true, tone: 'ghost', onClick: () => props.onMonth(shiftMonth(month, -1)) }, '‹'),
-            h('b', { style: { fontSize: 15, minWidth: 116, textAlign: 'center' } }, view.label),
-            h(Btn, { small: true, tone: 'ghost', onClick: () => props.onMonth(shiftMonth(month, 1)) }, '›'),
-            h(Btn, { small: true, tone: 'ghost', onClick: () => props.onMonth(monthOf(localToday())) }, '回到本月'),
-          ),
-          extra: h('span', { className: 'aw-note' }, `${view.gradeLabel} · 系数 ${view.gradeFactor} · 每日 ${fmtHours(view.dailyHours)}`),
-          children: h(
-            'div',
-            { style: { display: 'flex', flexDirection: 'column', gap: 12 } },
-            !view.coverage.complete
-              ? h(
-                  'div',
-                  { className: 'aw-chip is-warn', style: { alignSelf: 'flex-start', whiteSpace: 'normal' } },
-                  `⚠️ ${view.coverage.uncoveredYears.join('、')} 年的节假日安排尚未导入，这些日期按「周一~周五 = 工作日」估算，工时数字可能不准。`,
-                )
-              : null,
-            h(
-              'div',
-              { className: 'aw-metrics' },
-              h(Metric, { label: '法定工作日', value: String(view.workdays), unit: '天', hint: `已过 ${view.elapsedWorkdays} · 剩余 ${view.remainingWorkdays}` }),
-              h(Metric, { label: '计划工时', value: fmtHours(view.planHours), hint: `${view.workdays} × ${fmtHours(view.dailyHours)}` }),
-              h(Metric, { label: '必须工时', value: fmtHours(view.requiredHours), hint: `计划 × ${view.gradeFactor}`, tone: 'ok' }),
-              h(Metric, { label: '已录工时', value: fmtHours(view.loggedHours), hint: view.leaveDays > 0 ? `请假 ${view.leaveDays} 天` : null }),
-              h(Metric, {
-                label: '达成率',
-                value: pctText(view.achievement),
-                tone: view.achievement >= 100 ? 'ok' : view.achievement >= 80 ? undefined : 'danger',
-              }),
-              h(Metric, { label: '缺口', value: fmtHours(view.gapHours) }),
-            ),
-            h(Bar, { ratio: view.achievement / 100, tone: view.achievement >= 100 ? undefined : 'gold' }),
-            view.overtimeHours > 0 ? h('div', { className: 'aw-note' }, `其中加班 ${fmtHours(view.overtimeHours)}`) : null,
-          ),
-        }),
-
-        // ── 本月工单（工时台账的「按单」视角）──
-        h(Card, {
-          title: h(
-            'span',
-            { className: 'aw-split-row' },
-            '本月工单 ',
-            h('b', null, String(view.tickets.length)),
-            h('span', { className: 'aw-note' }, '带工时的工单自动计入已录工时'),
-          ),
-          extra: h(
-            'span',
-            { className: 'aw-note' },
-            `${view.label}，应出勤 ${view.workdays} 天，100% 工时 ${fmtHours(view.planHours)}，110% 工时 ${fmtHours(view.requiredHours)}`,
-          ),
-          children: h(
-            'div',
-            { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
-            // 录入区：两行、带字段名的栅格（12 栏），不再是一排控件乱折行
-            h(
-              'div',
-              { className: 'aw-ticket-form' },
-              h(Field, { label: '类型', style: { gridColumn: 'span 2' } },
-                h(
-                  'select',
-                  { className: 'aw-select', value: ticketDraft.type, onChange: (event) => setTicketDraft({ ...ticketDraft, type: event.target.value }) },
-                  h('option', { value: '' }, '未指定'),
-                  TICKET_TYPES.map((value) => h('option', { key: value, value }, value)),
-                )),
-              h(Field, { label: '日期', style: { gridColumn: 'span 2' } },
-                h('input', {
-                  className: 'aw-input',
-                  type: 'date',
-                  value: ticketDraft.date,
-                  onChange: (event) => setTicketDraft({ ...ticketDraft, date: event.target.value }),
-                })),
-              h(Field, { label: '项目', style: { gridColumn: 'span 2' } },
-                h(
-                  'select',
-                  { className: 'aw-select', value: ticketDraft.projectId, onChange: (event) => setTicketDraft({ ...ticketDraft, projectId: event.target.value }) },
-                  h('option', { value: '' }, '无项目'),
-                  projects.map((project) => h('option', { key: project.id, value: project.id }, `${project.emoji}${project.name}`)),
-                )),
-              h(Field, { label: '小时', style: { gridColumn: 'span 2' } },
-                h('input', {
-                  className: 'aw-input',
-                  type: 'number',
-                  min: 0,
-                  max: MAX_TICKET_HOURS,
-                  step: 0.5,
-                  placeholder: '—',
-                  title: `留空表示「无工时」，最多 ${MAX_TICKET_HOURS}h`,
-                  value: ticketDraft.hours,
-                  onChange: (event) => setTicketDraft({ ...ticketDraft, hours: event.target.value }),
-                })),
-              h(Field, { label: '问题 / 任务', style: { gridColumn: 'span 4' } },
-                h('input', {
-                  className: 'aw-input',
-                  placeholder: '这条单在做什么',
-                  value: ticketDraft.title,
-                  onChange: (event) => setTicketDraft({ ...ticketDraft, title: event.target.value }),
-                  onKeyDown: (event) => {
-                    if (event.key === 'Enter') addTicket();
-                  },
-                })),
-              h(Field, { label: '链接', style: { gridColumn: 'span 8' } },
-                h('input', {
-                  className: 'aw-input',
-                  placeholder: 'https://issuetrack.example.com/issues/10001',
-                  value: ticketDraft.url,
-                  onChange: (event) => setTicketDraft({ ...ticketDraft, url: event.target.value }),
-                })),
-              h(Field, { label: '备注', style: { gridColumn: 'span 2' } },
-                h('input', {
-                  className: 'aw-input',
-                  placeholder: '不改',
-                  value: ticketDraft.note,
-                  onChange: (event) => setTicketDraft({ ...ticketDraft, note: event.target.value }),
-                })),
-              h(Field, { label: '\u00a0', style: { gridColumn: 'span 2' } },
-                h(Btn, { tone: 'primary', disabled: busy || !ticketDraft.title.trim(), onClick: addTicket }, '记工单')),
-            ),
-            view.tickets.length === 0
-              ? h('div', { className: 'aw-note' }, '本月还没有工单。上面填一条，链接和小时都可以留空。')
-              : h(
-                  'div',
-                  { className: 'aw-scroll', style: { maxHeight: 420 } },
-                  h(
-                    'table',
-                    { className: 'aw-table' },
-                    h(
-                      'thead',
-                      null,
-                      h(
-                        'tr',
-                        null,
-                        h('th', null, '日期'),
-                        h('th', null, '类型'),
-                        h('th', null, '项目'),
-                        h('th', null, '链接'),
-                        h('th', null, '问题/任务'),
-                        h('th', { className: 'is-num' }, '小时'),
-                        h('th', null, ''),
-                      ),
-                    ),
-                    h(
-                      'tbody',
-                      null,
-                      view.tickets.map((ticket) => [
-                        h(
-                          'tr',
-                          { key: ticket.id },
-                          h('td', null, String(ticket.date).slice(5)),
-                          h(
-                            'td',
-                            null,
-                            ticket.type
-                              ? h('span', { className: 'aw-chip', style: { padding: '1px 7px', fontSize: 11 } }, ticket.type)
-                              : h('span', { className: 'aw-note' }, '—'),
-                          ),
-                          h(
-                            'td',
-                            null,
-                            ticket.projectName
-                              ? h(
-                                  'span',
-                                  null,
-                                  h('span', { className: 'aw-dot', style: { background: ticket.projectColor || BRAND.jadeLight, marginRight: 4 } }),
-                                  ticket.projectName,
-                                )
-                              : h('span', { className: 'aw-note' }, '未归类'),
-                          ),
-                          h(
-                            'td',
-                            { className: 'is-link' },
-                            ticket.url
-                              ? h('a', { href: ticket.url, target: '_blank', rel: 'noreferrer', title: ticket.url }, `🔗 ${ticket.url}`)
-                              : h('span', { className: 'aw-note' }, '—'),
-                          ),
-                          h('td', null, ticket.title),
-                          h(
-                            'td',
-                            { className: 'is-num' },
-                            ticket.hours === null || ticket.hours === undefined
-                              ? h('span', { className: 'aw-note' }, '无工时')
-                              : `${fmtHours(ticket.hours)}${ticket.note ? `（${ticket.note}）` : ''}`,
-                          ),
-                          h(
-                            'td',
-                            null,
-                            ticketConfirm === ticket.id
-                              ? h(
-                                  'div',
-                                  { className: 'aw-row-acts', style: { justifyContent: 'flex-end' } },
-                                  h(
-                                    Btn,
-                                    {
-                                      small: true,
-                                      tone: 'danger',
-                                      disabled: busy,
-                                      title: `确认删除「${ticket.title}」`,
-                                      onClick: () => {
-                                        api.send('ticket_remove', { id: ticket.id });
-                                        setTicketConfirm(null);
-                                      },
-                                    },
-                                    '确认删除',
-                                  ),
-                                  h(Btn, { small: true, tone: 'ghost', onClick: () => setTicketConfirm(null) }, '取消'),
-                                )
-                              : h(
-                                  'div',
-                                  { className: 'aw-row-acts', style: { justifyContent: 'flex-end' } },
-                                  h(IconBtn, {
-                                    icon: 'edit',
-                                    title: '修改这张工单',
-                                    disabled: busy,
-                                    onClick: () => setEditingTicket(ticket),
-                                  }),
-                                  h(IconBtn, {
-                                    icon: 'trash',
-                                    tone: 'danger',
-                                    title: '删除这张工单',
-                                    disabled: busy,
-                                    onClick: () => setTicketConfirm(ticket.id),
-                                  }),
-                                ),
-                          ),
-                        ),
-                      ]),
-                    ),
-                  ),
-                ),
-            view.tickets.length > 0
-              ? h(
-                  'div',
-                  { className: 'aw-row-meta' },
-                  `工单合计 ${fmtHours(view.ticketHours)}`,
-                  `· 本月已录 ${fmtHours(view.loggedHours)} / 必须 ${fmtHours(view.requiredHours)}`,
-                  view.gapHours > 0 ? `· 还差 ${fmtHours(view.gapHours)}` : '· 已达标',
-                )
-              : null,
-          ),
-        }),
-
-        h(TicketEditor, { api, ticket: editingTicket, projects, busy, onClose: () => setEditingTicket(null) }),
-
-        view.byProject.length > 0
-          ? h(Card, {
-              title: '按项目分布',
-              children: h(
-                'div',
-                { style: { display: 'flex', flexDirection: 'column', gap: 7 } },
-                view.byProject.map((row) =>
-                  h(
-                    'div',
-                    { key: row.projectId || 'none', style: { display: 'flex', flexDirection: 'column', gap: 3 } },
-                    h('div', { className: 'aw-split-row' }, h('span', { className: 'aw-dot', style: { background: row.color } }), h('span', { style: { fontWeight: 600 } }, `${row.emoji} ${row.name}`), h('span', { className: 'aw-spacer' }), h('span', { className: 'aw-note' }, fmtHours(row.hours))),
-                    h(Bar, { ratio: view.loggedHours > 0 ? row.hours / view.loggedHours : 0, style: { height: 6 } }),
-                  ),
-                ),
-              ),
-            })
-          : null,
-      );
-    }
-
-    /** 工单编辑器：改类型 / 日期 / 项目 / 小时 / 问题 / 链接 / 备注。 */
-    function TicketEditor(props) {
-      const { api, ticket, projects, busy, onClose } = props;
-      const [editing, setEditing] = React.useState({ id: null, draft: null });
-
-      if (!ticket) return null;
-
-      const initial = (item) => ({
-        type: item.type || '',
-        date: item.date || localToday(),
-        projectId: item.projectId || '',
-        hours: item.hours === null || item.hours === undefined ? '' : String(item.hours),
-        title: item.title || '',
-        url: item.url || '',
-        note: item.note || '',
-      });
-
-      const draft = editing.id === ticket.id && editing.draft ? editing.draft : initial(ticket);
-      const set = (patch) => setEditing({ id: ticket.id, draft: { ...draft, ...patch } });
-
-      const save = () => {
-        const title = draft.title.trim();
-        if (!title) return;
-        api
-          .send('ticket_update', {
-            id: ticket.id,
-            type: draft.type,
-            date: draft.date,
-            projectId: draft.projectId,
-            hours: draft.hours === '' ? null : Number(draft.hours),
-            title,
-            url: draft.url,
-            note: draft.note,
-          })
-          .then((result) => {
-            if (result.ok) onClose();
-          });
-      };
-
-      return h(
-        'div',
-        {
-          className: 'aw-backdrop',
-          onClick: (event) => {
-            if (event.target === event.currentTarget) onClose();
-          },
-        },
-        h(
-          'div',
-          { className: 'aw-modal' },
-          h('h3', null, '修改工单'),
-          h(
-            'div',
-            { className: 'aw-ticket-form' },
-            h(Field, { label: '类型', style: { gridColumn: 'span 2' } },
-              h('select', { className: 'aw-select', value: draft.type, onChange: (event) => set({ type: event.target.value }) },
-                h('option', { value: '' }, '未指定'),
-                TICKET_TYPES.map((value) => h('option', { key: value, value }, value)))),
-            h(Field, { label: '日期', style: { gridColumn: 'span 2' } },
-              h('input', { className: 'aw-input', type: 'date', value: draft.date, onChange: (event) => set({ date: event.target.value }) })),
-            h(Field, { label: '项目', style: { gridColumn: 'span 2' } },
-              h('select', { className: 'aw-select', value: draft.projectId, onChange: (event) => set({ projectId: event.target.value }) },
-                h('option', { value: '' }, '无项目'),
-                projects.map((project) => h('option', { key: project.id, value: project.id }, `${project.emoji}${project.name}`)))),
-            h(Field, { label: '小时', style: { gridColumn: 'span 2' } },
-              h('input', { className: 'aw-input', type: 'number', min: 0, max: MAX_TICKET_HOURS, step: 0.5, placeholder: '—', title: `留空表示「无工时」，最多 ${MAX_TICKET_HOURS}h`, value: draft.hours, onChange: (event) => set({ hours: event.target.value }) })),
-            h(Field, { label: '问题 / 任务', style: { gridColumn: 'span 4' } },
-              h('input', { className: 'aw-input', value: draft.title, autoFocus: true, onChange: (event) => set({ title: event.target.value }), onKeyDown: (event) => { if (event.key === 'Enter') save(); } })),
-            h(Field, { label: '链接', style: { gridColumn: 'span 8' } },
-              h('input', { className: 'aw-input', value: draft.url, onChange: (event) => set({ url: event.target.value }) })),
-            h(Field, { label: '备注', style: { gridColumn: 'span 4' } },
-              h('input', { className: 'aw-input', placeholder: '不改', value: draft.note, onChange: (event) => set({ note: event.target.value }) })),
-          ),
-          h(
-            'div',
-            { className: 'aw-form', style: { justifyContent: 'flex-end' } },
-            h(Btn, { tone: 'ghost', onClick: onClose }, '取消'),
-            h(Btn, { tone: 'primary', disabled: busy || !draft.title.trim(), onClick: save }, '保存'),
-          ),
-          h('div', { className: 'aw-note' }, '改小时数 / 日期 / 项目时，对应的工时台账条目会跟着重算，不会重复计。'),
-        ),
-      );
     }
 
     /* ================= 报表 ================= */
@@ -2837,7 +2369,7 @@ const CSS = `
                           h(Chip, { tone: statusTone[item.status], children: { draft: '草稿', final: '已定稿', archived: '已归档' }[item.status] }),
                           item.revision > 1 ? h('span', null, `v${item.revision}`) : null,
                           h('span', null, `${item.from} ~ ${item.to}`),
-                          item.totals ? h('span', null, `${item.totals.done} 项 / ${fmtHours(item.totals.hours)}`) : null,
+                          item.totals ? h('span', null, `${item.totals.done} 项`) : null,
                           item.projectName ? h('span', null, item.projectName) : null,
                         ),
                       ),
@@ -2977,13 +2509,12 @@ const CSS = `
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [dim, preset, range.from, range.to]);
 
-      if (!view || !view.totals || !view.legs || !Array.isArray(view.buckets) || !Array.isArray(view.byProject)) {
+      if (!view || !view.totals || !Array.isArray(view.buckets)) {
         return h(Empty, null, '加载中…');
       }
 
       const peak = Math.max(1, ...view.buckets.map((bucket) => bucket.done));
       const totals = view.totals;
-      const legs = view.legs;
 
       return h(
         'div',
@@ -3044,11 +2575,8 @@ const CSS = `
               h(Metric, { label: '按时完成率', value: pctText(totals.onTimeRate), tone: totals.onTimeRate >= 80 ? 'ok' : undefined }),
               h(Metric, { label: '顺延次数', value: String(totals.rolledOut) }),
               h(Metric, { label: '漏做 / 放弃', value: `${totals.missed} / ${totals.dropped}` }),
-              h(Metric, { label: '投入工时', value: fmtHours(legs.loggedHours) }),
-              h(Metric, { label: '必须工时', value: fmtHours(legs.requiredHours), hint: `法定工作日 ${legs.workdays} 天` }),
-              h(Metric, { label: '工时达成率', value: pctText(legs.achievement), tone: legs.achievement >= 100 ? 'ok' : legs.achievement >= 80 ? undefined : 'danger' }),
             ),
-            h(Bar, { ratio: legs.achievement / 100, tone: legs.achievement >= 100 ? undefined : 'gold' }),
+            h(Bar, { ratio: totals.completionRate / 100, tone: totals.completionRate >= 80 ? undefined : 'gold' }),
           ),
         }),
 
@@ -3063,7 +2591,7 @@ const CSS = `
               view.buckets.map((bucket) =>
                 h(
                   'div',
-                  { className: 'aw-trend-col', key: bucket.key, title: `${bucket.label}\n完成 ${bucket.done} · 计划 ${bucket.planned} · 完成率 ${bucket.completionRate}%\n工时 ${fmtHours(bucket.hours)}` },
+                  { className: 'aw-trend-col', key: bucket.key, title: `${bucket.label}\n完成 ${bucket.done} · 计划 ${bucket.planned} · 完成率 ${bucket.completionRate}%` },
                   h('div', { className: 'aw-note', style: { fontSize: 'var(--aw-fs-caption)' } }, bucket.done > 0 ? String(bucket.done) : ''),
                   h('div', { className: 'aw-trend-bar', style: { height: `${Math.max(2, (bucket.done / peak) * 100)}%` } }),
                   h('div', { className: 'aw-note', style: { fontSize: 'var(--aw-fs-caption)', whiteSpace: 'nowrap' } }, view.dim === 'day' ? bucket.label.slice(0, 5) : bucket.label),
@@ -3093,7 +2621,7 @@ const CSS = `
                         h('div', {
                           key: cell.date,
                           className: `aw-heat-cell${cell.level > 0 ? ` l${cell.level}` : ''}`,
-                          title: `${cell.date} 完成 ${cell.count} 项 · ${fmtHours(cell.hours)}`,
+                          title: `${cell.date} 完成 ${cell.count} 项`,
                         }),
                       );
                     }
@@ -3104,23 +2632,6 @@ const CSS = `
             })
           : null,
 
-        view.byProject.length > 0
-          ? h(Card, {
-              title: '按项目分布（工时）',
-              children: h(
-                'div',
-                { style: { display: 'flex', flexDirection: 'column', gap: 7 } },
-                view.byProject.map((row) =>
-                  h(
-                    'div',
-                    { key: row.projectId || 'none', style: { display: 'flex', flexDirection: 'column', gap: 3 } },
-                    h('div', { className: 'aw-split-row' }, h('span', { className: 'aw-dot', style: { background: row.color } }), h('span', { style: { fontWeight: 600 } }, `${row.emoji} ${row.name}`), h('span', { className: 'aw-spacer' }), h('span', { className: 'aw-note' }, fmtHours(row.hours))),
-                    h(Bar, { ratio: legs.loggedHours > 0 ? row.hours / legs.loggedHours : 0, style: { height: 6 } }),
-                  ),
-                ),
-              ),
-            })
-          : null,
       );
     }
 
@@ -3130,9 +2641,6 @@ const CSS = `
     function bootToDraft(boot) {
       if (!boot || !boot.settings) return null;
       return {
-        dailyHours: String(boot.settings.dailyHours),
-        gradeLabel: boot.settings.gradeLabel,
-        gradeFactor: String(boot.settings.gradeFactor),
         rolloverPolicy: boot.settings.rolloverPolicy,
         recurringRollover: boot.settings.recurringRollover,
         reportFooter: boot.settings.reportFooter || '',
@@ -3162,9 +2670,6 @@ const CSS = `
         api
           .send('settings_update', {
             settings: {
-              dailyHours: Number(draft.dailyHours),
-              gradeLabel: draft.gradeLabel,
-              gradeFactor: Number(draft.gradeFactor),
               rolloverPolicy: draft.rolloverPolicy,
               recurringRollover: draft.recurringRollover,
               reportFooter: draft.reportFooter,
@@ -3199,52 +2704,6 @@ const CSS = `
               'select',
               { className: 'aw-select', 'aria-label': '皮肤', value: skin, onChange: (event) => onSkin(event.target.value) },
               SKINS.map((item) => h('option', { key: item.id, value: item.id }, item.label)),
-            ),
-          ),
-        ),
-
-        /* ── 工时口径 ── */
-        h(
-          SetGroup,
-          { title: '工时口径' },
-          h(
-            SetRow,
-            { label: '每日工时', hint: '一个法定工作日的标准工时' },
-            h('input', {
-              className: 'aw-input',
-              type: 'number',
-              min: 0.5,
-              max: 24,
-              step: 0.5,
-              value: draft.dailyHours,
-              onChange: (event) => setDraft({ ...draft, dailyHours: event.target.value }),
-            }),
-          ),
-          h(
-            SetRow,
-            { label: '职级名称', hint: '只是显示用' },
-            h('input', { className: 'aw-input', value: draft.gradeLabel, onChange: (event) => setDraft({ ...draft, gradeLabel: event.target.value }) }),
-          ),
-          h(
-            SetRow,
-            { label: '职级系数', hint: '必须工时 = 计划 × 系数' },
-            h('input', {
-              className: 'aw-input',
-              type: 'number',
-              min: 0.1,
-              max: 5,
-              step: 0.05,
-              value: draft.gradeFactor,
-              onChange: (event) => setDraft({ ...draft, gradeFactor: event.target.value }),
-            }),
-          ),
-          h(
-            SetRow,
-            { wide: true },
-            h(
-              'div',
-              { className: 'aw-set-note' },
-              '口径说明：请假不扣减必须工时、上月盈亏不结转到下月 —— 必须工时永远等于「当月法定工作日 × 每日工时 × 职级系数」，稳定可预测。',
             ),
           ),
         ),
@@ -3300,7 +2759,7 @@ const CSS = `
             {
               wide: true,
               label: '自定义报表模板',
-              hint: '留空用内置版式；支持 {{title}} / {{weeklyCompleted}} / {{nextWeek}} / {{completed}} / {{hours}} 等占位符',
+              hint: '留空用内置版式；支持 {{title}} / {{weeklyCompleted}} / {{nextWeek}} / {{completed}} / {{stats}} 等占位符',
               stacked: true,
             },
             h('textarea', {
@@ -3476,7 +2935,6 @@ const CSS = `
       // initialTab 只有本地渲染台（test/browser）会传，用来给每个分页一个可截图的 URL；
       // DSH 里不传，行为与以前一致。
       const [tab, setTab] = React.useState(props.initialTab || 'today');
-      const [month, setMonth] = React.useState(monthOf(localToday()));
       // initialSettings 同样只有本地渲染台会传：?settings=1 直接打开设置弹层，
       // 好让设置页也有一个可截图的 URL。
       const [settingsOpen, setSettingsOpen] = React.useState(!!props.initialSettings);
@@ -3502,7 +2960,6 @@ const CSS = `
       React.useEffect(() => {
         if (tab === 'today') api.open('today');
         else if (tab === 'projects') api.open('projects');
-        else if (tab === 'hours') api.open('hours', { month });
         else if (tab === 'reports') api.open('reports', { status: 'all' });
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [tab]);
@@ -3540,7 +2997,6 @@ const CSS = `
       const tabs = [
         { id: 'today', label: '今日' },
         { id: 'projects', label: '项目' },
-        { id: 'hours', label: '工时' },
         { id: 'reports', label: '报表' },
         { id: 'stats', label: '统计' },
       ];
@@ -3557,7 +3013,7 @@ const CSS = `
           'div',
           { className: 'aw-shell' },
 
-          /* 左栏：品牌 + 导航 + 本月工时卡 */
+          /* 左栏：品牌 + 导航 + 今日待办卡 */
           h(
             'aside',
             { className: 'aw-rail' },
@@ -3569,7 +3025,7 @@ const CSS = `
                 'div',
                 null,
                 h('div', { className: 'aw-brand-name' }, 'AI 工作台账'),
-                h('div', { className: 'aw-brand-sub' }, '待办 · 工时 · 报表'),
+                h('div', { className: 'aw-brand-sub' }, '待办 · 报表 · 统计'),
               ),
             ),
             h(
@@ -3593,19 +3049,24 @@ const CSS = `
             boot
               ? h(
                   'div',
-                  { className: 'aw-promo', title: '本月工时：已录 / 必须' },
-                  h('div', { className: 'aw-promo-label' }, boot.hours.label),
-                  h('div', { className: 'aw-promo-value' }, `${fmtHours(boot.hours.loggedHours)} / ${fmtHours(boot.hours.requiredHours)}`),
-                  h('div', { className: 'aw-promo-bar' }, h('i', { style: { width: `${Math.min(100, Number(boot.hours.achievement) || 0)}%` } })),
+                  { className: 'aw-promo', title: '今日待办 / 其中顺延' },
+                  h('div', { className: 'aw-promo-label' }, '今日待办'),
+                  h('div', { className: 'aw-promo-value' }, `${boot.counts.openTodos ?? 0} 项`),
+                  h(
+                    'div',
+                    { className: 'aw-promo-bar' },
+                    h('i', {
+                      style: {
+                        width: `${Math.min(100, ((Number(boot.counts.carried) || 0) / Math.max(1, Number(boot.counts.openTodos) || 1)) * 100)}%`,
+                      },
+                    }),
+                  ),
                   h(
                     'div',
                     { className: 'aw-promo-note' },
-                    h('span', null, `达成 ${pctText(boot.hours.achievement)}`),
+                    h('span', null, `顺延 ${boot.counts.carried ?? 0}`),
                     boot.counts.draftReports > 0 ? h('span', null, `草稿 ${boot.counts.draftReports}`) : null,
                   ),
-                  !boot.hours.coverage.complete
-                    ? h('div', { className: 'aw-promo-note' }, `${boot.hours.coverage.uncoveredYears.join('、')} 年日历缺失`)
-                    : null,
                 )
               : null,
           ),
@@ -3645,24 +3106,12 @@ const CSS = `
           // 只把「确实属于当前分页」的视图喂给分页组件。切换分页时新数据还没到，
           // view 就是 null，各分页会退化成「加载中…」，而不是拿错数据崩掉。
           tab === 'today'
-            ? h(TodayTab, { api, view, busy: snap.busy, boot, onGoHours: () => setTab('hours') })
+            ? h(TodayTab, { api, view, busy: snap.busy, boot })
               : tab === 'projects'
                 ? h(ProjectsTab, { api, view, busy: snap.busy })
-                : tab === 'hours'
-                  ? h(HoursTab, {
-                      api,
-                      view,
-                      busy: snap.busy,
-                      boot,
-                      month,
-                      onMonth: (next) => {
-                        setMonth(next);
-                        api.open('hours', { month: next });
-                      },
-                    })
-                  : tab === 'reports'
-                    ? h(ReportsTab, { api, view, busy: snap.busy, boot })
-                    : h(StatsTab, { api, view, busy: snap.busy }),
+                : tab === 'reports'
+                  ? h(ReportsTab, { api, view, busy: snap.busy, boot })
+                  : h(StatsTab, { api, view, busy: snap.busy }),
 
               h(
                 'div',

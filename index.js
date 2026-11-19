@@ -1,14 +1,14 @@
 /**
  * AI 工作台账 · AI Workbench — Host 半体（插件入口）。
  *
- * 只留在本机的账：做过的事留得下、投入的工时算得清、汇报报得出。
+ * 只留在本机的账：做过的事留得下、汇报报得出。
  *
- * 架构：本文件只做三件事 —— 串行化状态仓库、一条 HTTP 路由、三个 Agent 工具。
+ * 架构：本文件只做三件事 —— 串行化状态仓库、一条 HTTP 路由、两个 Agent 工具。
  * 全部业务逻辑在同目录的 lib/ 下：
  *   lib/util.js      日期与数值工具
  *   lib/calendar.js  中国法定工作日日历（data/china-holidays.json）
  *   lib/state.js     状态模型 + 惰性顺延引擎（唯一权威）
- *   lib/domain.js    派生视图（今日/待办/项目/工时/统计）
+ *   lib/domain.js    派生视图（今日/待办/项目/统计）
  *   lib/reports.js   报表 fact 聚合 + Markdown 渲染
  *   lib/actions.js   全部写操作
  *   lib/tools.js     Agent 工具定义
@@ -17,19 +17,10 @@
  * 数据落在 ~/ai-workbench/state.json，原子写入。
  */
 import { applyAction } from './lib/actions.js';
-import {
-  bootstrapView,
-  hoursSummary,
-  projectsView,
-  reportView,
-  reportsView,
-  statsView,
-  todayView,
-  todosView,
-} from './lib/domain.js';
+import { bootstrapView, projectsView, reportView, reportsView, statsView, todayView, todosView } from './lib/domain.js';
 import { readState, rolloverThrough, writeState } from './lib/state.js';
-import { hoursTool, reportTool, todoTool } from './lib/tools.js';
-import { clampNum, dayKeyOf, isKey, monthKeyOf, normalizeKey, round2 } from './lib/util.js';
+import { reportTool, todoTool } from './lib/tools.js';
+import { dayKeyOf, isKey, normalizeKey } from './lib/util.js';
 
 /** Cordis 函数插件名。 */
 export const name = 'ai-workbench';
@@ -42,9 +33,9 @@ const ROUTE = '/ai-workbench/api';
 const MAX_BODY_BYTES = 1024 * 1024;
 
 /**
- * Host 半体：一个串行化的状态仓库 + 一条 HTTP 路由 + 三个 Agent 工具。
+ * Host 半体：一个串行化的状态仓库 + 一条 HTTP 路由 + 两个 Agent 工具。
  * @param ctx Cordis 上下文。
- * @param config 行 config（可覆盖 dailyHours / gradeFactor / gradeLabel / holidayOverrides）。
+ * @param config 行 config（可覆盖 holidayOverrides）。
  */
 export function apply(ctx, config) {
   /** 懒加载 + 变更串行化，避免并发写丢更新。 */
@@ -55,10 +46,6 @@ export function apply(ctx, config) {
   function seed(state) {
     if (state.meta.seeded === true) return state;
     const s = config && typeof config === 'object' ? config : {};
-    if (s.dailyHours !== undefined) state.settings.dailyHours = clampNum(s.dailyHours, 0.5, 24, state.settings.dailyHours);
-    if (s.gradeFactor !== undefined) state.settings.gradeFactor = clampNum(s.gradeFactor, 0.1, 5, state.settings.gradeFactor);
-    if (s.gradeLabel !== undefined) state.settings.gradeLabel = String(s.gradeLabel).slice(0, 60);
-    if (s.grade !== undefined) state.settings.grade = String(s.grade).slice(0, 40);
     if (s.holidayOverrides && typeof s.holidayOverrides === 'object') {
       state.settings.holidayOverrides = { ...state.settings.holidayOverrides, ...s.holidayOverrides };
     }
@@ -114,8 +101,6 @@ export function apply(ctx, config) {
     const dateParam = p('date');
     const date = isKey(dateParam) ? dateParam : today;
     const view = p('view') ?? 'bootstrap';
-    const monthParam = p('month');
-    const month = /^\d{4}-\d{2}$/.test(String(monthParam ?? '')) ? monthParam : monthKeyOf(date);
 
     switch (view) {
       case 'bootstrap':
@@ -136,8 +121,6 @@ export function apply(ctx, config) {
         });
       case 'projects':
         return projectsView(state, { today: date });
-      case 'hours':
-        return hoursSummary(state, month, date);
       case 'stats':
         return statsView(state, {
           today: date,
@@ -176,7 +159,7 @@ export function apply(ctx, config) {
 
             if (req.method === 'GET') {
               // `today` 驱动顺延补算；`date` 只是视图要看的那一天。两者分开，
-              // 才能做到「看着上周的工时页，但顺延仍然只推进到今天」。
+              // 才能做到「查看历史某天，但顺延仍然只推进到今天」。
               const runKey = isKey(url.searchParams.get('today')) ? url.searchParams.get('today') : dayKeyOf();
               const payload = await run(runKey, (state, key) => {
                 const view = viewOf(state, key, url.searchParams);
@@ -237,12 +220,9 @@ export function apply(ctx, config) {
                     action: body.action,
                     plannedDelta: after.stats.plannedCount - before.stats.plannedCount,
                     doneDelta: after.stats.doneCount - before.stats.doneCount,
-                    hoursDelta: round2(after.hours.logged - before.hours.logged),
                     backlogDelta: after.stats.backlogCount - before.stats.backlogCount,
                     overdueDelta: after.stats.overdueCount - before.stats.overdueCount,
                     todayDone: after.stats.doneCount,
-                    todayHours: after.hours.logged,
-                    todayTarget: after.hours.target,
                   },
                 };
               });
@@ -276,10 +256,9 @@ export function apply(ctx, config) {
   );
 
   ctx.effect(() => ctx.tools.register(todoTool(store)), 'ai-workbench: workbench_todo tool');
-  ctx.effect(() => ctx.tools.register(hoursTool(store)), 'ai-workbench: workbench_hours tool');
   ctx.effect(() => ctx.tools.register(reportTool(store)), 'ai-workbench: workbench_report tool');
 
-  console.log(`[ai-workbench] 已就绪：${ROUTE} · 工具 workbench_todo / workbench_hours / workbench_report`);
+  console.log(`[ai-workbench] 已就绪：${ROUTE} · 工具 workbench_todo / workbench_report`);
 }
 
 /** 把顺延结果压成给前端用的小结（没有推进则为 null）。 */
@@ -294,7 +273,7 @@ function rolloverEffect(rollover) {
   };
 }
 
-/** JSON 响应（no-store：工时与待办都是实时事实）。 */
+/** JSON 响应（no-store：待办与流水都是实时事实）。 */
 function sendJson(res, status, payload) {
   res.statusCode = status;
   res.setHeader('content-type', 'application/json; charset=utf-8');

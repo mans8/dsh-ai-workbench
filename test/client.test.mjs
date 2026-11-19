@@ -3,7 +3,7 @@
  *
  * 思路：用一个 ~120 行的 mini-React 垫片真正执行 client.js 里的组件树
  * （createElement / useState / useEffect 都实现），配上从**真实 Host** 抓下来的
- * 视图 JSON，把六个分页各渲染一遍。
+ * 视图 JSON，把四个分页各渲染一遍。
  *
  * 这样能在不装 DSH、不开浏览器的情况下抓到绝大多数 UI 运行时错误：
  * 读空值、调用不存在的字段、组件签名不匹配、hook 顺序问题等等。
@@ -343,10 +343,10 @@ async function collectViews() {
   const order = (await host.post({ action: 'project_create', name: '订单中台', code: 'OMS', emoji: '📦', owner: '我' })).result.data.id;
   const recon = (await host.post({ action: 'project_create', name: '对账系统', code: 'REC', emoji: '🧾' })).result.data.id;
 
-  await host.post({ action: 'todo_create', title: '订单导出接口重构', project: '订单中台', plannedDate: '2026-10-05', estimateHours: 8, priority: 'P1', tags: ['重构'] });
-  await host.post({ action: 'todo_create', title: '支付回调幂等性改造', project: '订单中台', plannedDate: '2026-10-06', estimateHours: 6, priority: 'P0' });
-  await host.post({ action: 'todo_create', title: '对账系统灰度方案设计', project: '对账系统', plannedDate: '2026-10-07', estimateHours: 6, dueDate: '2026-10-09' });
-  await host.post({ action: 'todo_create', title: '整理接口文档', plannedDate: '2026-10-12', estimateHours: 2, progress: 40 });
+  await host.post({ action: 'todo_create', title: '订单导出接口重构', project: '订单中台', plannedDate: '2026-10-05', priority: 'P1', tags: ['重构'] });
+  await host.post({ action: 'todo_create', title: '支付回调幂等性改造', project: '订单中台', plannedDate: '2026-10-06', priority: 'P0' });
+  await host.post({ action: 'todo_create', title: '对账系统灰度方案设计', project: '对账系统', plannedDate: '2026-10-07', dueDate: '2026-10-09' });
+  await host.post({ action: 'todo_create', title: '整理接口文档', plannedDate: '2026-10-12', progress: 40 });
   await host.post({ action: 'todo_create', title: '背单词', plannedDate: '2026-10-11', rollover: 'backlog' });
   await host.post({ action: 'todo_create', title: '与产品对齐导出字段', plannedDate: '2026-10-12' });
 
@@ -359,18 +359,10 @@ async function collectViews() {
   // ── 拨到今天 ──
   host.setClock('2026-10-12');
 
-  await host.post({ action: 'todo_create', title: '每日站会', repeat: { freq: 'workdays' }, estimateHours: 0.5, priority: 'P2' });
-  await host.post({ action: 'todo_create', title: '周一复盘', repeat: { freq: 'weekly', weekdays: [1] }, estimateHours: 1 });
+  await host.post({ action: 'todo_create', title: '每日站会', repeat: { freq: 'workdays' }, priority: 'P2' });
+  await host.post({ action: 'todo_create', title: '周一复盘', repeat: { freq: 'weekly', weekdays: [1] } });
 
-  // 工时只能由工单产生
-  await host.post({ action: 'ticket_add', date: '2026-10-08', hours: 7.5, project: '订单中台', title: '联调' });
-  await host.post({ action: 'ticket_add', date: '2026-10-09', hours: 6, title: '写文档' });
-  await host.post({ action: 'ticket_add', date: '2026-10-10', hours: 8, project: '对账系统', title: '调休加班' });
-  await host.post({ action: 'hours_mark', date: '2026-10-13', status: 'leave', note: '年假' });
-  await host.post({ action: 'ticket_add', date: '2026-10-11', hours: 2, title: '周末补一点' });
-  await host.post({ action: 'ticket_add', date: '2026-10-12', hours: 5, title: '月底统一填' });
-  await host.post({ action: 'ticket_add', title: '密评整改相关优化', project: '订单中台', url: 'https://issuetrack.example.com/issues/10001', date: '2026-10-13', hours: null });
-  await host.post({ action: 'ticket_add', title: '排障 #10002联通', project: '对账系统', url: 'https://issuetrack.example.com/issues/10002', date: '2026-10-15', hours: 3, note: '不改' });
+  // 手工把 10-14 标成放假日，让设置弹层里能看到这条覆盖
   await host.post({ action: 'holiday_override_set', date: '2026-10-14', kind: 'holiday' });
 
   await host.post({ action: 'report_create', type: 'weekly', date: '2026-10-09' });
@@ -384,7 +376,6 @@ async function collectViews() {
     ['today', 'today', {}],
     ['todos', 'todos', { status: 'all' }],
     ['projects', 'projects', {}],
-    ['hours', 'hours', { month: '2026-10' }],
     ['stats', 'stats', { dim: 'month', from: '2026-01-01', to: '2026-12-31' }],
     ['statsYear', 'stats', { dim: 'year', from: '2026-01-01', to: '2026-12-31', heatmap: '1' }],
     ['statsDay', 'stats', { dim: 'day', from: '2026-10-01', to: '2026-10-12' }],
@@ -588,25 +579,23 @@ function renderPage(tab, extraPresets = {}, viewOverride) {
   const viewMap = {
     today: views.today,
     projects: views.projects,
-    hours: views.hours,
     reports: views.reports,
     stats: views.stats,
   };
   const api = fakeApi(tab, viewOverride ?? viewMap[tab]);
-  // WorkPage 的 hook 顺序：0=snapshot(useSnapshot)、1=subscribe effect、2=tab、3=month、4=settingsOpen
+  // WorkPage 的 hook 顺序：0=snapshot(useSnapshot)、1=subscribe effect、2=tab、3=settingsOpen、4=skin
   react.presets({ WorkPage: { 2: tab }, ...extraPresets });
   const { tree, effectErrors } = react.render(react.createElement(slots.main.component, { api }));
   return { tree, text: textOf(tree), api, effectErrors };
 }
 
-group('2. 六个分页都能无异常渲染');
+group('2. 四个分页都能无异常渲染');
 {
   const expectations = {
     today: ['AI 工作台账', '今日待办', '整理接口文档', '每日站会', '新增', '本周完成', '顺延'],
     projects: ['订单中台', '对账系统', '新建项目', '完成'],
-    hours: ['法定工作日', '必须工时', '127.5h', '140.25h', '本月工单', '问题/任务', '无工时', '类型'],
     reports: ['生成报表', '周报', '报表库', '已归档'],
-    stats: ['汇总', '完成率', '工时达成率'],
+    stats: ['汇总', '完成率', '按时完成率', '完成数分布'],
   };
 
   for (const [tab, needles] of Object.entries(expectations)) {
@@ -735,24 +724,6 @@ group('2c. 数据仓库：乱序响应不能覆盖新数据');
 
 group('3. 真实数据是否正确落到界面上');
 {
-  check('工时页：夹具把 10-14 手工标成放假日 → 17 个工作日 / 127.5h / 140.25h', () => {
-    const { text } = renderPage('hours');
-    assert.ok(text.includes('127.5h'), '缺少计划工时 127.5h');
-    assert.ok(text.includes('140.25h'), '缺少必须工时 140.25h');
-    assert.ok(text.includes('17'), '工作日数应当变成 17');
-    assert.ok(text.includes('2026 年 10 月'), '缺少月份标题');
-    // 「调休 / 国庆节」原来靠月历展示，月历去掉后不再出现在页面上
-    assert.ok(!text.includes('国庆节'), '月历已移除，不该再有节假日名');
-    // 手工覆盖的效果体现在数字上（18 → 17 天、135h → 127.5h），月历没了就没有文案了
-    assert.ok(text.includes('17'), '工作日数应当受手工覆盖影响');
-    assert.equal(views.hours.workdays, 17, '夹具里的 10-14 覆盖应当生效');
-  });
-
-  check('工时页：10-13 标记为请假后单独统计，且不扣减必须工时', () => {
-    const { text } = renderPage('hours');
-    assert.ok(text.includes('请假'), '缺少请假统计');
-  });
-
   check('今日页显示顺延 / 逾期 / 积压提示', () => {
     const { text } = renderPage('today');
     assert.ok(text.includes('顺延'), '缺少顺延提示');
@@ -766,10 +737,22 @@ group('3. 真实数据是否正确落到界面上');
     assert.ok(text.includes('草稿'), '缺少草稿状态');
   });
 
-  check('统计页给出汇总指标', () => {
-    const { text } = renderPage('stats');
+  check('统计页给出汇总指标，且不再有任何工时指标', () => {
+    const { tree, text } = renderPage('stats');
     assert.ok(/完成率/.test(text));
     assert.ok(/项/.test(text));
+    for (const gone of ['投入工时', '必须工时', '工时达成率', '按项目分布', '工时']) {
+      assert.ok(!text.includes(gone), `统计页不该再出现「${gone}」`);
+    }
+    // 完成数分布的 tooltip 说的是完成数 / 计划 / 完成率，不再带工时
+    const tips = [];
+    (function walk(node) {
+      if (!node) return;
+      if (node.type === 'div' && node.props?.className === 'aw-trend-col') tips.push(String(node.props.title || ''));
+      for (const child of node.children || []) walk(child);
+    })(tree);
+    assert.ok(tips.length > 0, '没有完成数分布的柱子');
+    assert.ok(tips.every((tip) => tip.includes('完成率') && !tip.includes('工时')), `tooltip 不该含工时：${JSON.stringify(tips)}`);
   });
 
   check('统计页切到按年时渲染热力图', () => {
@@ -778,10 +761,11 @@ group('3. 真实数据是否正确落到界面上');
     assert.ok(text.includes('热力图'), '缺少热力图');
   });
 
-  check('项目页显示项目进度与投入工时', () => {
+  check('项目页显示项目进度，不再有「投入 Xh」chip', () => {
     const { text } = renderPage('projects');
     assert.ok(text.includes('OMS'), '缺少项目代号');
     assert.ok(text.includes('完成'), '缺少完成进度');
+    assert.ok(!text.includes('投入'), '项目卡片不该再有「投入 Xh」chip');
   });
 }
 
@@ -836,8 +820,8 @@ group('3g. 换肤：三套皮肤 + 记住选择');
   });
 
   check('设置弹层里能选外观，选中值就是当前皮肤', () => {
-    const api = fakeApi('hours', views.hours);
-    react.presets({ WorkPage: { 2: 'hours', 3: '2026-10', 4: true } });
+    const api = fakeApi('reports', views.reports);
+    react.presets({ WorkPage: { 2: 'reports', 3: true } });
     const { tree } = react.render(react.createElement(slots.main.component, { api }));
     const page = findNode(tree, (n) => n.type === 'div' && n.props?.className === 'aw-modal is-settings');
     assert.ok(page, '设置弹层没渲染');
@@ -967,8 +951,8 @@ group('3h. 报表页的兜底：缺字段也要渲染出来');
   });
 
   check('设置弹层底部显示界面版本，便于确认加载了哪一版', () => {
-    const api = fakeApi('hours', views.hours);
-    react.presets({ WorkPage: { 2: 'hours', 3: '2026-10', 4: true } });
+    const api = fakeApi('reports', views.reports);
+    react.presets({ WorkPage: { 2: 'reports', 3: true } });
     const text = textOf(react.render(react.createElement(slots.main.component, { api })).tree);
     assert.match(text, /界面版本 v\d/, '设置里应当能看到版本号');
   });
@@ -1063,40 +1047,32 @@ group('3f2. 周报日期可自定义，默认「上周五 ~ 本周四」');
 
 group('4. 交互组件：设置弹层 / 日期编辑器 / 报表编辑器');
 {
-  check('设置弹层渲染成功（含节假日覆盖与口径说明）', () => {
-    const { text, effectErrors } = renderPage('hours', { WorkPage: { 2: 'hours', 3: '2026-10', 4: true } });
+  check('保存设置只提交仍存在的字段，不带工时口径', () => {
+    const api = fakeApi('reports', views.reports);
+    react.presets({ WorkPage: { 2: 'reports', 3: true } });
+    const element = react.createElement(slots.main.component, { api });
+    const save = findNode(react.render(element).tree, (n) => n.type === 'button' && textOf(n).trim() === '保存设置');
+    assert.ok(save, '找不到保存设置按钮');
+    save.props.onClick();
+    const updates = api.calls.filter((c) => c[0] === 'send' && c[1] === 'settings_update');
+    assert.equal(updates.length, 1, `应当只发一次 settings_update：${JSON.stringify(api.calls)}`);
+    assert.deepEqual(Object.keys(updates[0][2].settings).sort(), [
+      'recurringRollover', 'reportFiles', 'reportFooter', 'reportSignature', 'reportTemplate', 'rolloverPolicy',
+    ]);
+  });
+
+  check('设置弹层渲染成功：保留日历/报表设置，删除工时口径', () => {
+    const { text, effectErrors } = renderPage('reports', { WorkPage: { 2: 'reports', 3: true } });
     assert.equal(effectErrors.length, 0, effectErrors.map((e) => e.message).join('; '));
     assert.ok(text.includes('设置'), '缺少设置标题');
-    assert.ok(text.includes('每日工时'), '缺少每日工时字段');
-    assert.ok(text.includes('节假日与调休'), '缺少节假日区块');
-    assert.ok(text.includes('2026-10-14'), '缺少已有的手工覆盖项');
-    assert.ok(text.includes('不'), '缺少口径说明');
-  });
-
-  check('工时页不再有月历（也没有日期弹层）', () => {
-    const { tree, text } = renderPage('hours');
-    assert.ok(!findNode(tree, (n) => n.props?.className === 'aw-cal'), '月历还在');
-    assert.ok(!findNode(tree, (n) => n.props?.className === 'aw-cal-cell'), '月历格子还在');
-    assert.ok(!text.includes('月历'), '不该再出现「月历」');
-    for (const gone of ['标记请假', '半天假', '加一条', '整天填报', '清空当天']) {
-      assert.ok(!text.includes(gone), `不该再出现「${gone}」`);
+    for (const section of ['外观', '待办顺延', '报表', '节假日与调休', '危险操作']) {
+      assert.ok(text.includes(section), `缺少设置分组「${section}」`);
     }
-  });
-
-  check('工单录入区带「类型」下拉，三档齐全', () => {
-    const { tree } = renderPage('hours');
-    const form = findNode(tree, (n) => n.props?.className === 'aw-ticket-form');
-    assert.ok(form, '找不到工单录入栅格');
-    const selects = [];
-    (function walk(node) {
-      if (!node) return;
-      if (node.type === 'select') selects.push(node);
-      for (const child of node.children || []) walk(child);
-    })(form);
-    const typeSelect = selects.find((sel) => (sel.children || []).some((opt) => opt.type === 'option' && (opt.children || []).some((c) => c.text === '任务')));
-    assert.ok(typeSelect, '找不到类型下拉');
-    const options = (typeSelect.children || []).map((opt) => (opt.children || []).map((c) => c.text).join(''));
-    assert.deepEqual(options, ['未指定', '任务', '其他']);
+    assert.ok(text.includes('内置日历'), '缺少内置日历信息');
+    assert.ok(text.includes('2026-10-14'), '缺少已有的手工覆盖项');
+    for (const gone of ['工时口径', '每日工时', '职级名称', '职级系数', '口径说明', '{{hours}}']) {
+      assert.ok(!text.includes(gone), `设置里不该再出现「${gone}」`);
+    }
   });
 
   check('报表编辑器：选中一份报表后 Markdown 预览正确渲染', () => {
@@ -1142,25 +1118,17 @@ group('4. 交互组件：设置弹层 / 日期编辑器 / 报表编辑器');
 
   check('空数据也不崩（所有视图为空时）', () => {
     const empty = {
-      today: { date: '2026-10-12', weekday: '一', weekLabel: 'x', kind: 'workday', holidayName: '', stats: { plannedCount: 0, doneCount: 0, carriedCount: 0, backlogCount: 0, overdueCount: 0, futureCount: 0, openCount: 0, progress: 0 }, todos: [], backlog: [], overdue: [], done: [], weekDone: [], dropped: [], carriedIn: [], month: { month: '2026-10', label: '2026 年 10 月', from: '2026-10-01', to: '2026-10-31', workdays: 18, planHours: 135, requiredHours: 148.5, loggedHours: 0, achievement: 0, gapHours: 148.5, remainingWorkdays: 15, needPerDay: 9.9, needPerDayOver: true }, week: { from: '2026-10-12', to: '2026-10-18', week: 42, year: 2026 }, hours: { logged: 0, target: 7.5, progress: 0, status: 'normal', note: '', entries: [], manualHours: null }, logs: [], projects: [], warnings: [] },
+      today: { date: '2026-10-12', weekday: '一', weekLabel: 'x', kind: 'workday', holidayName: '', stats: { plannedCount: 0, doneCount: 0, carriedCount: 0, backlogCount: 0, overdueCount: 0, futureCount: 0, openCount: 0, progress: 0 }, todos: [], backlog: [], overdue: [], done: [], weekDone: [], dropped: [], carriedIn: [], week: { from: '2026-10-12', to: '2026-10-18', week: 42, year: 2026 }, logs: [], projects: [], warnings: [] },
       todos: { total: 0, counts: { open: 0, done: 0, dropped: 0, carried: 0 }, tags: [], todos: [] },
       projects: [],
-      hours: (() => {
-        const copy = JSON.parse(JSON.stringify(views.hours));
-        copy.loggedHours = 0;
-        copy.achievement = 0;
-        copy.byProject = [];
-        copy.days = copy.days.map((day) => ({ ...day, hours: 0, entries: 0, status: 'normal', met: false, partial: false }));
-        return copy;
-      })(),
       reports: { total: 0, counts: { draft: 0, final: 0, archived: 0 }, projects: [], reports: [] },
-      stats: { dim: 'month', from: '2026-01-01', to: '2026-12-31', projectId: null, buckets: [], totals: { done: 0, created: 0, dropped: 0, missed: 0, rolledOut: 0, planned: 0, onTime: 0, hours: 0, completionRate: 0, onTimeRate: 0 }, legs: { workdays: 248, planHours: 1860, requiredHours: 2046, loggedHours: 0, achievement: 0 }, byProject: [], heatmap: null },
+      stats: { dim: 'month', from: '2026-01-01', to: '2026-12-31', projectId: null, buckets: [], totals: { done: 0, created: 0, dropped: 0, missed: 0, rolledOut: 0, planned: 0, onTime: 0, completionRate: 0, onTimeRate: 0 }, byProject: [], heatmap: null },
     };
     const saved = {};
     for (const key of Object.keys(empty)) saved[key] = views[key];
     Object.assign(views, empty);
     try {
-      for (const tab of ['today', 'projects', 'hours', 'reports', 'stats']) {
+      for (const tab of ['today', 'projects', 'reports', 'stats']) {
         const { effectErrors } = renderPage(tab);
         assert.equal(effectErrors.length, 0, `${tab} 副作用抛错：${effectErrors.map((e) => e.message).join('; ')}`);
       }
@@ -1187,7 +1155,7 @@ group('3b. 今日页只有三节，且完全不涉及工时');
 
   check('今日页的面板里不出现任何工时内容', () => {
     const { tree } = renderPage('today');
-    // 只检查 .aw-board 内部：页面副标题「待办 · 工时 · 报表」属于全局抬头，不算今日页内容
+    // 只检查 .aw-board 内部：页面副标题「待办 · 报表 · 统计」属于全局抬头，不算今日页内容
     const boardText = (function find(node) {
       if (!node) return null;
       if (node.type === 'div' && node.props?.className === 'aw-board') return textOf(node);
@@ -1201,14 +1169,6 @@ group('3b. 今日页只有三节，且完全不涉及工时');
     assert.doesNotMatch(boardText, /工时/, '今日页面板里不该出现「工时」');
   });
 
-  check('工时只能由工单产生：工时页没有批量填报，也没有待填工作日', () => {
-    const { text } = renderPage('hours');
-    for (const gone of ['月底批量填报', '补齐未填', '待填工作日']) {
-      assert.ok(!text.includes(gone), `不该再出现「${gone}」`);
-    }
-    assert.ok(text.includes('本月工单'), '缺少本月工单表');
-    assert.ok(text.includes('记工单'), '缺少记工单入口');
-  });
 }
 
 group('3b2. 顶部与今日页的冗余 chip 已去掉');
@@ -1224,15 +1184,15 @@ group('3b2. 顶部与今日页的冗余 chip 已去掉');
     return out;
   }
 
-  check('顶部状态栏不再有「日需」「顺延中」', () => {
+  check('顶部状态栏不再有「日需」「顺延中」，侧栏 promo 改成今日待办', () => {
     const { tree } = renderPage('today');
     const chips = chipTexts(tree);
     assert.ok(!chips.some((c) => c.startsWith('日需')), `不该再有日需 chip：${JSON.stringify(chips)}`);
     assert.ok(!chips.some((c) => c.startsWith('顺延中')), `不该再有顺延中 chip：${JSON.stringify(chips)}`);
-    // 该留的还在：重构后不再是胶囊，而是外壳上的一行台账文字
+    // 侧栏 promo 卡现在回答「今天做什么」：今日待办 openTodos / 顺延 carried
     const text = textOf(tree);
-    assert.match(text, /20\d\d 年 \d+ 月/, '本月工时的月份不该被一起删掉');
-    assert.match(text, /\d+(?:\.\d+)?h\s*\/\s*\d+(?:\.\d+)?h/, '已录 / 必须的数值不该被一起删掉');
+    assert.match(text, /今日待办\s+\d+\s*项/, '今日待办的数量应当保留');
+    assert.match(text, /顺延\s+\d+/, '顺延的数量应当保留');
   });
 
   check('今日页不再有「法定工作日」chip 和「顺延 N」chip', () => {
@@ -1319,7 +1279,7 @@ group('3c2. 新增待办弹层：× 关闭 + 纵向全宽表单');
     assert.ok(form, '缺少纵向表单容器');
     const fields = (form.children || []).filter((n) => n.type === 'div' && /aw-field/.test(n.props?.className || ''));
     assert.ok(fields.length >= 6, `应有至少 6 个字段，实际 ${fields.length}`);
-    for (const label of ['待办标题', '所属项目', '优先级', '预估工时', '计划日期', '重复任务', '顺延策略']) {
+    for (const label of ['待办标题', '所属项目', '优先级', '计划日期', '重复任务', '顺延策略']) {
       assert.ok(textOf(form).includes(label), `缺少字段名称「${label}」`);
     }
   });
@@ -1574,7 +1534,7 @@ group('3c4. 待办可以修改（未完成 / 已完成都支持）');
     const text = textOf(tree);
     assert.ok(text.includes('修改待办'), '没出现修改弹层');
     // 字段齐全
-    for (const label of ['标题', '备注', '项目', '优先级', '顺延策略', '计划日', '截止日', '预估工时', '完成度']) {
+    for (const label of ['标题', '备注', '项目', '优先级', '顺延策略', '计划日', '截止日', '完成度']) {
       assert.ok(text.includes(label), `弹层缺少「${label}」`);
     }
     assert.equal(api.calls.filter((c) => c[0] === 'send').length, 0, '只是打开弹层不该发请求');
@@ -1632,183 +1592,6 @@ group('3c4. 待办可以修改（未完成 / 已完成都支持）');
     edits[edits.length - 1].props.onClick();
     const opened = react.render(element).tree;
     assert.ok(textOf(opened).includes('修改已完成的任务'), '已完成条目应当打开「修改已完成的任务」弹层');
-  });
-}
-
-group('3c5b. 工单行：修改 / 删除是常显图标');
-{
-  /** 取第 n 行那两个图标按钮（带 props 的对象，便于直接点）。 */
-  function iconButtons(tree) {
-    const found = [];
-    (function walk(node) {
-      if (!node) return;
-      if (node.type === 'button' && /aw-icon-btn/.test(node.props?.className || '')) found.push(node);
-      for (const child of node.children || []) walk(child);
-    })(tree);
-    return found;
-  }
-
-  check('每行两个图标按钮，不再有 ⋯，也不用展开菜单', () => {
-    const { tree } = renderPage('hours');
-    const icons = iconButtons(tree);
-    const rows = views.hours.tickets.length;
-    assert.equal(icons.length, rows * 2, `工单 ${rows} 条，图标按钮 ${icons.length} 个`);
-    assert.ok(!collectButtons(tree).includes('⋯'), '不该再有 ⋯');
-    assert.ok(!findNode(tree, (n) => n.type === 'tr' && n.props?.className === 'aw-table-menu'), '不该再有菜单行');
-    const labels = icons.map((node) => node.props['aria-label']);
-    for (const want of ['修改这张工单', '删除这张工单']) {
-      assert.ok(labels.includes(want), `图标缺少可访问名「${want}」：${JSON.stringify(labels)}`);
-    }
-  });
-
-  check('图标按钮里有 svg 图标，尺寸固定 26×26 便于对齐', () => {
-    const { tree } = renderPage('hours');
-    const icons = iconButtons(tree);
-    assert.ok(icons[0].props.className.includes('aw-icon-btn'));
-    const svg = findNode(icons[0], (n) => n.type === 'svg');
-    assert.ok(svg, '图标按钮里没有 svg');
-    assert.ok(countIn(svg, (n) => n.type === 'path') >= 2, '图标路径太少');
-    const css = cssOf(tree);
-    assert.match(css, /^\.aw-icon-btn\{[^}]*width:30px/m, '图标按钮应当固定宽度');
-  });
-
-  check('点删除图标先就地变确认，不立刻删；确认后才发 ticket_remove', () => {
-    const api = fakeApi('hours', views.hours);
-    react.presets({ WorkPage: { 2: 'hours' } });
-    const element = react.createElement(slots.main.component, { api });
-
-    const first = react.render(element).tree;
-    const trash = iconButtons(first).find((node) => node.props['aria-label'] === '删除这张工单');
-    assert.ok(trash, '找不到删除图标');
-    trash.props.onClick();
-
-    const confirming = react.render(element).tree;
-    const labels = collectButtons(confirming);
-    assert.ok(labels.includes('确认删除'), `应当出现确认按钮：${JSON.stringify(labels)}`);
-    assert.ok(labels.includes('取消'));
-    assert.equal(api.calls.filter((c) => c[0] === 'send').length, 0, '仅仅点删除图标不该发请求');
-
-    findNode(confirming, (n) => n.type === 'button' && textOf(n).trim() === '确认删除').props.onClick();
-    const removes = api.calls.filter((c) => c[0] === 'send' && c[1] === 'ticket_remove');
-    assert.equal(removes.length, 1);
-    assert.ok(removes[0][2].id, 'ticket_remove 必须带 id');
-  });
-
-  check('点取消退回两个图标', () => {
-    const api = fakeApi('hours', views.hours);
-    react.presets({ WorkPage: { 2: 'hours' } });
-    const element = react.createElement(slots.main.component, { api });
-
-    iconButtons(react.render(element).tree).find((n) => n.props['aria-label'] === '删除这张工单').props.onClick();
-    const confirming = react.render(element).tree;
-    findNode(confirming, (n) => n.type === 'button' && textOf(n).trim() === '取消').props.onClick();
-
-    const back = react.render(element).tree;
-    assert.ok(!collectButtons(back).includes('确认删除'), '取消后不该还留着确认按钮');
-    assert.equal(iconButtons(back).length, views.hours.tickets.length * 2, '取消后应当恢复两个图标');
-  });
-
-  check('点修改图标打开工单编辑器，七个字段预填当前值', () => {
-    const api = fakeApi('hours', views.hours);
-    react.presets({ WorkPage: { 2: 'hours' } });
-    const element = react.createElement(slots.main.component, { api });
-
-    iconButtons(react.render(element).tree).find((n) => n.props['aria-label'] === '修改这张工单').props.onClick();
-
-    const opened = react.render(element).tree;
-    const modal = findNode(opened, (n) => n.type === 'div' && n.props?.className === 'aw-modal');
-    assert.ok(modal, '没打开编辑器');
-    assert.ok(textOf(modal).includes('修改工单'));
-    const labels = [];
-    (function walk(node) {
-      if (!node) return;
-      if (node.type === 'label') labels.push(textOf(node).trim());
-      for (const child of node.children || []) walk(child);
-    })(modal);
-    for (const want of ['类型', '日期', '项目', '小时', '问题 / 任务', '链接', '备注']) {
-      assert.ok(labels.includes(want), `缺少「${want}」，现有：${JSON.stringify(labels)}`);
-    }
-    const first = views.hours.tickets[0];
-    assert.ok(findNode(modal, (n) => n.type === 'input' && n.props?.value === first.title), '问题 / 任务没有预填');
-  });
-
-  check('改小时数保存，只发一次 ticket_update 且带上新值', () => {
-    const api = fakeApi('hours', views.hours);
-    react.presets({ WorkPage: { 2: 'hours' } });
-    const element = react.createElement(slots.main.component, { api });
-
-    iconButtons(react.render(element).tree).find((n) => n.props['aria-label'] === '修改这张工单').props.onClick();
-    const opened = react.render(element).tree;
-    const modal = findNode(opened, (n) => n.type === 'div' && n.props?.className === 'aw-modal');
-    findNode(modal, (n) => n.type === 'input' && n.props?.type === 'number').props.onChange({ target: { value: '3' } });
-
-    const after = react.render(element).tree;
-    findNode(findNode(after, (n) => n.props?.className === 'aw-modal'), (n) => n.type === 'button' && textOf(n).trim() === '保存').props.onClick();
-
-    const updates = api.calls.filter((c) => c[0] === 'send' && c[1] === 'ticket_update');
-    assert.equal(updates.length, 1, `应当只发一次，实际：${JSON.stringify(api.calls)}`);
-    assert.equal(updates[0][2].hours, 3);
-    assert.ok(updates[0][2].id, '必须带 id');
-  });
-}
-
-group('3c5. 本月工单表');
-{
-  check('表格列出项目 / 链接 / 任务 / 小时，链接可点', () => {
-    const { tree, text } = renderPage('hours');
-    const table = findNode(tree, (n) => n.type === 'table' && n.props?.className === 'aw-table');
-    assert.ok(table, '找不到工单表');
-    const heads = [];
-    (function walk(node) {
-      if (!node) return;
-      if (node.type === 'th') heads.push(textOf(node).trim());
-      for (const child of node.children || []) walk(child);
-    })(table);
-    assert.deepEqual(heads, ['日期', '类型', '项目', '链接', '问题/任务', '小时', '']);
-    const links = [];
-    (function walk(node) {
-      if (!node) return;
-      if (node.type === 'a') links.push(node.props);
-      for (const child of node.children || []) walk(child);
-    })(table);
-    assert.ok(links.length > 0, '链接列应当渲染成 <a>');
-    assert.match(links[0].href, /^https:\/\//);
-    assert.equal(links[0].target, '_blank');
-    assert.ok(text.includes('密评整改相关优化'));
-    assert.ok(text.includes('无工时'), '无工时的单要显示成「无工时」');
-    assert.ok(text.includes('3h（不改）'), '带备注的小时要带上备注');
-  });
-
-  check('表头写出应出勤 / 100% / 110% 三个数（对齐公司口径）', () => {
-    const { text } = renderPage('hours');
-    assert.match(text, /2026 年 10 月，应出勤 1[0-9] 天，100% 工时 [\d.]+h，110% 工时 [\d.]+h/);
-  });
-
-  check('录入区所有控件高度统一（否则日期框和下拉会参差不齐）', () => {
-    const { tree } = renderPage('hours');
-    const css = cssOf(tree);
-    assert.match(css, /--ctl-h:50px/, '控件高度应当是单一令牌');
-    assert.match(css, /^\.aw-input,\.aw-select,\.aw-textarea\{[^}]*height:var\(--ctl-h\)/m, '控件应当共用同一个高度令牌');
-    assert.match(css, /^\.aw-input\[type=date\],\.aw-input\[type=number\]\{height:var\(--ctl-h\)\}/m, '日期框要单独压平');
-    assert.match(css, /^\.aw-ticket-form \.aw-btn\{[^}]*height:var\(--ctl-h\)/m, '栅格里的按钮也要对齐');
-  });
-
-  check('底部给出工单合计与本月已录 / 必须 / 缺口', () => {
-    const { text } = renderPage('hours');
-    assert.match(text, /工单合计 [\d.]+h/);
-    assert.match(text, /本月已录 [\d.]+h \/ 必须 [\d.]+h/);
-  });
-
-  check('工时页没有工单时给出提示，而不是空白表', () => {
-    const empty = JSON.parse(JSON.stringify(views.hours));
-    empty.tickets = [];
-    empty.ticketHours = 0;
-    const api = fakeApi('hours', empty);
-    react.presets({ WorkPage: { 2: 'hours' } });
-    const { tree } = react.render(react.createElement(slots.main.component, { api }));
-    const text = textOf(tree);
-    assert.ok(text.includes('本月还没有工单'), '空状态没有提示');
-    assert.ok(!findNode(tree, (n) => n.type === 'table' && n.props?.className === 'aw-table'), '空状态不该渲染空表');
   });
 }
 
@@ -1954,41 +1737,6 @@ group('3c7. 项目表单只留必要字段');
   });
 }
 
-group('3c9. 工单工时上限 300h');
-{
-  check('录入框与编辑器都用「最大 300h」，不是 24', () => {
-    const { tree } = renderPage('hours');
-    const numbers = [];
-    (function walk(node) {
-      if (!node) return;
-      if (node.type === 'input' && node.props?.type === 'number' && node.props?.step === 0.5) numbers.push(node);
-      for (const child of node.children || []) walk(child);
-    })(tree);
-    assert.ok(numbers.length >= 1, '找不到工时的数字输入框');
-    for (const input of numbers) {
-      assert.equal(String(input.props.max), '300', `工时输入框上限应当是 300，实际 ${input.props.max}`);
-    }
-    assert.ok(textOf(tree).includes('300') || numbers[0].props.title.includes('300'), '应当提示最多 300h');
-  });
-
-  check('填 300 能被接受，填 301 会被拦在前端', () => {
-    const api = fakeApi('hours', views.hours);
-    react.presets({ WorkPage: { 2: 'hours' } });
-    const element = react.createElement(slots.main.component, { api });
-    // 每次 onChange 之后都要重新渲染再取下一个 handler，否则闭包里的 draft 是旧的，后一次会覆盖前一次
-    findNode(react.render(element).tree, (n) => n.type === 'input' && n.props?.placeholder === '这条单在做什么')
-      .props.onChange({ target: { value: '批量派发' } });
-    findNode(react.render(element).tree, (n) => n.type === 'input' && n.props?.type === 'number' && n.props?.step === 0.5)
-      .props.onChange({ target: { value: '300' } });
-
-    const ready = react.render(element).tree;
-    findNode(ready, (n) => n.type === 'button' && textOf(n).trim() === '记工单').props.onClick();
-    const creates = api.calls.filter((c) => c[0] === 'send' && c[1] === 'ticket_add');
-    assert.equal(creates.length, 1, `应当发一次，实际 ${JSON.stringify(api.calls)}`);
-    assert.equal(creates[0][2].hours, 300, '300 要原样发出去');
-  });
-}
-
 group('3g2. 分页条永远看得见');
 {
   check('分页永远可见：桌面在左栏竖排，窄屏降级成常驻横条', () => {
@@ -2002,7 +1750,7 @@ group('3g2. 分页条永远看得见');
     assert.match(narrow, /\.aw-tabs\{flex-direction:row/, '窄屏分页应当横排');
   });
 
-  check('五个分页一个不少，顺序固定', () => {
+  check('四个分页一个不少，顺序固定', () => {
     const { tree } = renderPage('today');
     const labels = [];
     (function walk(node) {
@@ -2010,7 +1758,7 @@ group('3g2. 分页条永远看得见');
       if (node.type === 'button' && /aw-tab( |$)/.test(String(node.props?.className || ''))) labels.push(textOf(node).trim());
       for (const child of node.children || []) walk(child);
     })(tree);
-    assert.deepEqual(labels, ['今日', '项目', '工时', '报表', '统计']);
+    assert.deepEqual(labels, ['今日', '项目', '报表', '统计']);
   });
 }
 
@@ -2130,9 +1878,9 @@ group('3d. 待办行的排版约束（一行放下 + 边框可见）');
 
 group('4b. 空按钮回归（任何 button 都必须有文案）');
 {
-  const tabs = ['today', 'projects', 'hours', 'reports', 'stats'];
+  const tabs = ['today', 'projects', 'reports', 'stats'];
 
-  check('六个分页里没有一个空按钮', () => {
+  check('四个分页里没有一个空按钮', () => {
     const problems = [];
     for (const tab of tabs) {
       const { tree } = renderPage(tab);
@@ -2145,7 +1893,7 @@ group('4b. 空按钮回归（任何 button 都必须有文案）');
 
   check('设置弹层里也没有空按钮', () => {
     const problems = [];
-    const settings = renderPage('hours', { WorkPage: { 2: 'hours', 3: '2026-10', 4: true } });
+    const settings = renderPage('reports', { WorkPage: { 2: 'reports', 3: true } });
     const emptySettings = collectButtons(settings.tree).filter((label) => label === '');
     if (emptySettings.length > 0) problems.push(`设置弹层: ${emptySettings.length} 个`);
     assert.deepEqual(problems, [], problems.join('；'));
@@ -2158,12 +1906,6 @@ group('4b. 空按钮回归（任何 button 都必须有文案）');
     assert.ok(labels.some((label) => label === '新建'), `按钮文案里没有「新建」：${JSON.stringify(labels)}`);
   });
 
-  check('工时页带有 +1h/+2h/+4h/+7.5h 的地方在工时台账里（今日页已经没有）', () => {
-    const todayLabels = collectButtons(renderPage('today').tree);
-    for (const gone of ['+1h', '+2h', '+4h', '+7.5h']) {
-      assert.ok(!todayLabels.includes(gone), `今日页不该再有「${gone}」`);
-    }
-  });
 }
 
 group('5. 组件不会在渲染期偷偷发请求');
@@ -2174,8 +1916,8 @@ group('5. 组件不会在渲染期偷偷发请求');
     assert.equal(writes.length, 0, `渲染期发生了写操作：${JSON.stringify(writes)}`);
   });
 
-  check('六个分页的渲染副作用都是只读的', () => {
-    for (const tab of ['today', 'projects', 'hours', 'reports', 'stats']) {
+  check('四个分页的渲染副作用都是只读的', () => {
+    for (const tab of ['today', 'projects', 'reports', 'stats']) {
       const { api } = renderPage(tab);
       const writes = api.calls.filter((call) => call[0] === 'send');
       assert.equal(writes.length, 0, `${tab} 渲染期发生了写操作：${JSON.stringify(writes)}`);

@@ -1,13 +1,12 @@
 {
   "name": "dsh-ai-workbench",
   "version": "1.0.0",
-  "description": "AI 工作台账（AI Workbench）：DSH 个人工作台账插件 —— 待办跨日顺延、按法定工作日核算工时、周报/月报/年报从真实流水生成并归档。数据全部留在本机。",
+  "description": "AI 工作台账（AI Workbench）：DSH 个人工作台账插件 —— 待办跨日顺延、项目管理、周报/月报/年报从真实流水生成并归档。数据全部留在本机。",
   "keywords": [
     "dsh",
     "dsh-plugin",
     "deepseek-harness",
     "todo",
-    "timesheet",
     "weekly-report"
   ],
   "license": "MIT",

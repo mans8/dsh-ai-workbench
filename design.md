@@ -102,9 +102,9 @@
 │ │ .aw-brand       │ │ .aw-inner  max-width 1180         │ │
 │ │  方印 + AI 工作台账 │ │  .aw-head   面包屑 + 标题 + 动作   │ │
 │ │ .aw-tabs (nav)  │ │  <分页内容>                        │ │
-│ │  5 个图标 + 文字 │ │  .aw-note 页脚一行                 │ │
+│ │  4 个图标 + 文字 │ │  .aw-note 页脚一行                 │ │
 │ │ .aw-promo       │ │                                    │ │
-│ │  本月工时（靛蓝）│ │                                    │ │
+│ │  今日待办（靛蓝）│ │                                    │ │
 │ └─────────────────┘ └────────────────────────────────────┘ │
 └───────────────────────────────────────────────────────────┘
 ```
@@ -112,13 +112,13 @@
 - **左栏宽度固定 232px**，不随窗口伸缩
 - 内容区 `max-width:1180px`，**靠左对齐**（不像落地页那样居中）
 - 分页永远在左栏，**不允许**再出现"内容里一条横向 tab 条"
-- **≤1080px**：左栏降级成贴顶横条（`position:sticky; top:0`），5 个分页必须全部可见，不许横向滚动藏起来
+- **≤1080px**：左栏降级成贴顶横条（`position:sticky; top:0`），4 个分页必须全部可见，不许横向滚动藏起来
 
 ### 页头
 
 ```
-AI 工作台账 / 工时        ← .aw-crumb，12px muted
-工时                   ← .aw-title，26px/600
+AI 工作台账 / 统计        ← .aw-crumb，12px muted
+统计                   ← .aw-title，26px/600
                                     [设置]  ← 右上，ghost 按钮
 ```
 
@@ -150,7 +150,7 @@ padding: 22px 24px;
 ```
 
 - 一排用 `.aw-metrics`：`grid-template-columns:repeat(auto-fit,minmax(186px,1fr))`
-- **每张卡必须有图标**。不给 `icon` 就由 `iconForLabel()` 按标签猜（完成/逾期/工时/草稿/积压）
+- **每张卡必须有图标**。不给 `icon` 就由 `iconForLabel()` 按标签猜（完成/逾期/草稿/积压）
 - 标签**不要 `white-space:nowrap`**（会把栅格撑破），靠 `text-overflow:ellipsis` 收
 
 ### 4.3 台账行 `.aw-row`
@@ -191,8 +191,8 @@ padding: 22px 24px;
 │ 外观                                            │
 │ 皮肤       切换整套配色，立即生效  [Horizon ▾]  │
 │                                                 │
-│ 工时口径                                        │
-│ 每日工时   一个法定工作日的标准工时  [7.5]      │
+│ 顺延与报表                                      │
+│ 顺延策略   未完成待办如何顺延      [always ▾]   │
 │ ...                                             │
 │ ─────────────────────────────────────────────── │
 │ 界面版本 …                 [关闭] [保存设置]    │
@@ -246,11 +246,11 @@ padding: 22px 24px;
 # 1. 逻辑与渲染测试（Host 150 项 / Client 108+ 项）
 node test/host.test.mjs && node test/client.test.mjs
 
-# 2. 视觉扫描：4 皮肤 × 5 分页，必须 0 FAIL / 0 REFLEX / 0 WARN
+# 2. 视觉扫描：4 皮肤 × 4 分页，必须 0 FAIL / 0 REFLEX / 0 WARN
 #    （需要在 test/browser 装好 react/react-dom/esbuild，且插件根目录有 puppeteer-core）
 node ../.dsh/skills/hallmark/scripts/sloplint.mjs \
   --url "http://127.0.0.1:8791/?tab=today&skin=horizon" \
-  --url "http://127.0.0.1:8791/?tab=hours&skin=dusk" \
+  --url "http://127.0.0.1:8791/?tab=reports&skin=dusk" \
   --genre modern-minimal --scope app --render
 
 # 3. 逐页点检：零控制台错误、零空按钮、分页高亮正确、侧栏在位

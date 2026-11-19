@@ -24,14 +24,14 @@ const TODAY = '2026-10-12';
 
 await post({ action: 'project_create', name: '订单中台', code: 'OMS', emoji: '📦', owner: '我', today: EARLY });
 await post({ action: 'project_create', name: '对账系统', code: 'REC', emoji: '🧾', today: EARLY });
-await post({ action: 'todo_create', title: '订单导出接口重构', project: '订单中台', plannedDate: '2026-10-05', estimateHours: 8, priority: 'P1', tags: ['重构'], today: EARLY });
-await post({ action: 'todo_create', title: '支付回调幂等性改造', project: '订单中台', plannedDate: '2026-10-06', estimateHours: 6, priority: 'P0', today: EARLY });
-await post({ action: 'todo_create', title: '对账系统灰度方案设计', project: '对账系统', plannedDate: '2026-10-07', estimateHours: 6, dueDate: '2026-10-09', progress: 30, today: EARLY });
-await post({ action: 'todo_create', title: '整理接口文档', plannedDate: TODAY, estimateHours: 2, progress: 40, today: EARLY });
+await post({ action: 'todo_create', title: '订单导出接口重构', project: '订单中台', plannedDate: '2026-10-05', priority: 'P1', tags: ['重构'], today: EARLY });
+await post({ action: 'todo_create', title: '支付回调幂等性改造', project: '订单中台', plannedDate: '2026-10-06', priority: 'P0', today: EARLY });
+await post({ action: 'todo_create', title: '对账系统灰度方案设计', project: '对账系统', plannedDate: '2026-10-07', dueDate: '2026-10-09', progress: 30, today: EARLY });
+await post({ action: 'todo_create', title: '整理接口文档', plannedDate: TODAY, progress: 40, today: EARLY });
 await post({ action: 'todo_create', title: '背单词', plannedDate: '2026-10-10', rollover: 'backlog', today: EARLY });
 await post({ action: 'todo_create', title: '与产品对齐导出字段', plannedDate: TODAY, today: EARLY });
 
-// 完成待办与工时无关：这里只写流水，工时在下面单独造
+// 完成待办：这里只写流水
 await post({ action: 'todo_complete', task: '订单导出接口重构', date: '2026-10-05', note: 'QPS 从 120 提到 900', today: EARLY });
 await post({ action: 'todo_complete', task: '支付回调幂等性改造', date: '2026-10-06', today: EARLY });
 await post({ action: 'log_note', title: '梳理导出字段口径', date: '2026-10-07', project: '订单中台', today: EARLY });
@@ -39,15 +39,8 @@ await post({ action: 'log_note', title: '梳理导出字段口径', date: '2026-
 await post({ action: 'todo_complete', task: '与产品对齐导出字段', date: TODAY, today: TODAY });
 
 // ── 拨到今天 ──
-await post({ action: 'todo_create', title: '每日站会', repeat: { freq: 'workdays' }, estimateHours: 0.5, today: TODAY });
-await post({ action: 'todo_create', title: '周一复盘', repeat: { freq: 'weekly', weekdays: [1] }, estimateHours: 1, today: TODAY });
-
-await post({ action: 'ticket_add', date: '2026-10-08', hours: 7.5, project: '订单中台', title: '联调', type: '工时派发', url: 'https://issuetrack.example.com/issues/10001', today: TODAY });
-await post({ action: 'ticket_add', date: '2026-10-09', hours: 6, title: '写文档', type: '售后', url: 'https://issuetrack.example.com/issues/10002', today: TODAY });
-await post({ action: 'ticket_add', date: '2026-10-10', hours: 8, project: '订单中台', title: '调休加班', type: '新建项目', url: 'https://issuetrack.example.com/issues/10003', today: TODAY });
-await post({ action: 'ticket_add', date: '2026-10-12', hours: 1, project: '订单中台', title: '修改发送接口变量空字符串校验', type: '售后', url: 'https://issuetrack.example.com/issues/10004', note: '不改', today: TODAY });
-await post({ action: 'hours_mark', date: '2026-10-13', status: 'leave', note: '年假', today: TODAY });
-// 月底批量填报：把本月今天及以前还没填的法定工作日一次补齐
+await post({ action: 'todo_create', title: '每日站会', repeat: { freq: 'workdays' }, today: TODAY });
+await post({ action: 'todo_create', title: '周一复盘', repeat: { freq: 'weekly', weekdays: [1] }, today: TODAY });
 
 await post({ action: 'report_create', type: 'weekly', date: '2026-10-09', today: TODAY });
 await post({ action: 'report_create', type: 'monthly', date: '2026-10-05', today: TODAY });

@@ -7,10 +7,6 @@
     - id: ai-workbench
       name: 'dsh-ai-workbench'
       config:
-        dailyHours: 7.5                        # 每个法定工作日的小时数
-        grade: standard                        # 职级标识
-        gradeLabel: 标准                       # 职级名称（仅展示，可在设置里改）
-        gradeFactor: 1.1                       # 必须工时 = 计划工时 × 该系数
-        # 额外放假 / 特殊作息可在这里或面板里加：
+        # 额外放假 / 特殊作息（供日历日期性质标签使用）可在这里或面板里加：
         # holidayOverrides:
         #   "2027-02-08": holiday

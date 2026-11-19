@@ -7,7 +7,7 @@ function dayCount(from, to) {
  * AI 工作台账 — Host 半体端到端测试（mock Cordis ctx）。
  *
  * 不依赖真实 DSH：伪造 webServer/connection/tools 三个服务，把 HTTP 路由当成
- * 被测接口驱动，覆盖顺延、重复任务、工时口径、统计与报表归档这几条核心路径。
+ * 被测接口驱动，覆盖顺延、重复任务、日历工作日、统计与报表归档这几条核心路径。
  *
  * 时间完全由 `today` 参数驱动（时钟木偶），所以测试与机器真实日期无关：
  *   A.day('2026-10-13')   → 之后的请求都当作「今天是 10-13」
@@ -220,11 +220,9 @@ group('1. 日历与法定工作日（2026）');
     }
   });
 
-  check('2026 全年 248 个法定工作日 → 计划 1860h → 必须 2046h', () => {
+  check('2026 全年共 248 个法定工作日', () => {
     const total = Object.keys(expected).reduce((sum, m) => sum + workdaysInMonth(`2026-${String(m).padStart(2, '0')}`), 0);
     assert.equal(total, 248);
-    assert.equal(total * 7.5, 1860);
-    assert.equal(Math.round(total * 7.5 * 1.1 * 100) / 100, 2046);
   });
 
   check('10-10 是调休上班日，10-01 是节假日，10-11 是周末', () => {
@@ -245,13 +243,15 @@ const A = await harness('rollover');
 group('2. 待办清单与跨日顺延');
 {
   const boot = await A.get('bootstrap');
-  check('bootstrap 返回今日、设置与工时概览', () => {
+  check('bootstrap 返回今日、设置、游标、计数与日历', () => {
     assert.equal(boot.view.today, '2026-10-12');
-    assert.equal(boot.view.settings.dailyHours, 7.5);
-    assert.equal(boot.view.settings.gradeFactor, 1.1);
-    assert.equal(boot.view.hours.workdays, 18);
-    assert.equal(boot.view.hours.planHours, 135);
-    assert.equal(boot.view.hours.requiredHours, 148.5);
+    assert.equal(boot.view.settings.rolloverPolicy, 'always');
+    assert.equal(boot.view.settings.recurringRollover, 'always');
+    assert.equal(boot.view.holiday.maxYear, 2026);
+    assert.ok(boot.view.cursor);
+    assert.ok(boot.view.counts);
+    assert.ok(Array.isArray(boot.view.projects));
+    assert.equal('hours' in boot.view, false);
   });
 
   check('状态文件已落盘', () => {
@@ -264,7 +264,6 @@ group('2. 待办清单与跨日顺延');
     title: '订单导出接口重构',
     project: '订单中台',
     plannedDate: '2026-10-12',
-    estimateHours: 8,
     priority: 'P1',
   });
   const todoId = created.data.id;
@@ -307,7 +306,7 @@ group('2. 待办清单与跨日顺延');
   });
 
   const done = await A.ok({ action: 'todo_complete', task: '订单导出', date: '2026-10-15' });
-  check('完成任务只写事实流水，绝不碰工时台账', () => {
+  check('完成任务只写一条事实流水', () => {
     const state = A.readState();
     const log = state.logs.find((item) => item.id === done.data.logId);
     assert.ok(log, '找不到流水');
@@ -315,8 +314,7 @@ group('2. 待办清单与跨日顺延');
     assert.equal(log.source, 'todo');
     assert.equal(log.rolloverCount, 3);
     assert.equal(log.voided, false);
-    assert.equal(log.hours, 0, '流水不该承载工时');
-    assert.equal(state.days['2026-10-15'], undefined, '完成待办不应产生任何工时记录');
+    assert.equal('hours' in log, false);
   });
 
   const afterDone = await A.get('today');
@@ -335,11 +333,6 @@ group('2. 待办清单与跨日顺延');
     assert.equal(todo.status, 'open');
     assert.equal(todo.plannedDate, '2026-10-15');
     assert.equal(todo.logId, null);
-  });
-
-  await checkAsync('撤销待办不牵动工时台账', async () => {
-    const view = await A.get('hours', { month: '2026-10' });
-    assert.equal(view.view.loggedHours, 0);
   });
 
   await A.ok({ action: 'todo_reschedule', task: '订单导出', deltaDays: 5 });
@@ -369,7 +362,7 @@ group('2. 待办清单与跨日顺延');
 
 group('3. 重复任务（一律顺延 + 一次只留一个未完成实例）');
 {
-  await A.ok({ action: 'todo_create', title: '每日站会', repeat: { freq: 'workdays' }, estimateHours: 0.5 });
+  await A.ok({ action: 'todo_create', title: '每日站会', repeat: { freq: 'workdays' } });
 
   const day1 = await A.get('today');
   check('重复任务模板建成后立刻开出当天实例（10-15 周四，工作日）', () => {
@@ -419,107 +412,6 @@ group('3. 重复任务（一律顺延 + 一次只留一个未完成实例）');
 }
 
 /* ------------------------------------------------------------------ *
- * 4. 工时管理
- * ------------------------------------------------------------------ */
-
-const B = await harness('hours');
-
-group('4. 工时管理（法定硬口径：请假不扣、按月不结转）');
-{
-  const month0 = await B.get('hours', { month: '2026-10' });
-  check('10 月：18 个法定工作日 → 计划 135h → 必须 148.5h', () => {
-    assert.equal(month0.view.workdays, 18);
-    assert.equal(month0.view.planHours, 135);
-    assert.equal(month0.view.requiredHours, 148.5);
-    assert.equal(month0.view.gradeFactor, 1.1);
-    assert.equal(month0.view.gradeLabel, '标准');
-  });
-
-  check('已过工作日 3 天（10-08/09/10），剩余 15 天（含今天）', () => {
-    assert.equal(month0.view.elapsedWorkdays, 3);
-    assert.equal(month0.view.remainingWorkdays, 15);
-    assert.equal(month0.view.idealHours, 24.75);
-    assert.equal(month0.view.paceDelta, -24.75);
-  });
-
-  check('日需工时 = 缺口 / 剩余工作日，超过 7.5h 时告警', () => {
-    assert.equal(month0.view.gapHours, 148.5);
-    assert.equal(month0.view.needPerDay, 9.9);
-    assert.equal(month0.view.needPerDayOver, true);
-  });
-
-  // 工时只能由工单产生：这三笔都是「工单」
-  const t1 = await B.ok({ action: 'ticket_add', date: '2026-10-08', hours: 7.5, title: '需求评审 + 编码' });
-  const t2 = await B.ok({ action: 'ticket_add', date: '2026-10-09', hours: 6, title: '编码' });
-  const project = await B.ok({ action: 'project_create', name: '订单中台', emoji: '📦' });
-  await B.ok({ action: 'ticket_add', date: '2026-10-10', hours: 8, project: '订单中台', title: '调休上班' });
-
-  const month1 = await B.get('hours', { month: '2026-10' });
-  check('录入 21.5h 后达成率与缺口正确', () => {
-    assert.equal(month1.view.loggedHours, 21.5);
-    assert.equal(month1.view.gapHours, 127);
-    assert.equal(month1.view.achievement, 14.5);
-    assert.equal(month1.view.paceDelta, -3.25);
-  });
-
-  check('按项目分布正确（8h 归到订单中台，13.5h 未归类）', () => {
-    assert.equal(month1.view.byProject.find((item) => item.projectId === project.data.id).hours, 8);
-    assert.equal(month1.view.byProject.find((item) => item.projectId === null).hours, 13.5);
-  });
-
-  check('10-10 调休上班投入 8h → 加班 0.5h', () => {
-    assert.equal(month1.view.overtimeHours, 0.5);
-  });
-
-  check('月历把 10-10 标成调休上班、10-01 标成国庆节', () => {
-    const cell = month1.view.days.find((item) => item.key === '2026-10-10');
-    assert.equal(cell.kind, 'adjusted-workday');
-    assert.equal(cell.met, true);
-    const national = month1.view.days.find((item) => item.key === '2026-10-01');
-    assert.equal(national.kind, 'holiday');
-    assert.equal(national.holiday, '国庆节');
-  });
-
-  await checkAsync('删除工单会把它带的小时一起收回', async () => {
-    await B.ok({ action: 'ticket_remove', id: t2.data.id });
-    const view = await B.get('hours', { month: '2026-10' });
-    assert.equal(view.view.loggedHours, 15.5);
-  });
-
-  await checkAsync('改工单小时数，台账跟着变（不会叠加）', async () => {
-    await B.ok({ action: 'ticket_update', id: t1.data.id, hours: 9.5 });
-    const view = await B.get('hours', { month: '2026-10' });
-    assert.equal(view.view.loggedHours, 17.5);
-    assert.equal(view.view.days.find((item) => item.key === '2026-10-08').hours, 9.5);
-  });
-
-  await B.ok({ action: 'hours_mark', date: '2026-10-13', status: 'leave', note: '年假' });
-  await checkAsync('请假在法定硬口径下不扣减必须工时，只单独统计', async () => {
-    const view = await B.get('hours', { month: '2026-10' });
-    assert.equal(view.view.leaveDays, 1);
-    assert.equal(view.view.requiredHours, 148.5);
-    assert.equal(view.view.days.find((item) => item.key === '2026-10-13').status, 'leave');
-  });
-
-  await checkAsync('已结束的月份：剩余工作日 0，日需工时为 null', async () => {
-    const view = await B.get('hours', { month: '2026-09' });
-    assert.equal(view.view.remainingWorkdays, 0);
-    assert.equal(view.view.needPerDay, null);
-    assert.equal(view.view.settled, true);
-    assert.equal(view.view.workdays, 22);
-    assert.equal(view.view.trend.length, 6);
-    assert.equal(view.view.trend[5].month, '2026-09');
-  });
-
-  await checkAsync('未来月份不虚报达成率', async () => {
-    const view = await B.get('hours', { month: '2026-12' });
-    assert.equal(view.view.loggedHours, 0);
-    assert.equal(view.view.achievement, 0);
-    assert.equal(view.view.isFutureMonth, true);
-  });
-}
-
-/* ------------------------------------------------------------------ *
  * 5. 报表（时间维度 / 项目维度 / 归档）
  * ------------------------------------------------------------------ */
 
@@ -531,16 +423,13 @@ group('5. 周报 / 月报 / 年报 与历史归档');
   C_PROJECT.order = (await C.ok({ action: 'project_create', name: '订单中台', code: 'OMS', emoji: '📦', owner: '我' })).data.id;
   C_PROJECT.recon = (await C.ok({ action: 'project_create', name: '对账系统', code: 'REC', emoji: '🧾' })).data.id;
 
-  await C.ok({ action: 'todo_create', title: '订单导出接口重构', project: '订单中台', plannedDate: '2026-10-05', estimateHours: 8 });
-  await C.ok({ action: 'todo_create', title: '支付回调幂等性改造', project: '订单中台', plannedDate: '2026-10-06', estimateHours: 6 });
-  await C.ok({ action: 'todo_create', title: '对账系统灰度方案设计', project: '对账系统', plannedDate: '2026-10-07', estimateHours: 6 });
+  await C.ok({ action: 'todo_create', title: '订单导出接口重构', project: '订单中台', plannedDate: '2026-10-05' });
+  await C.ok({ action: 'todo_create', title: '支付回调幂等性改造', project: '订单中台', plannedDate: '2026-10-06' });
+  await C.ok({ action: 'todo_create', title: '对账系统灰度方案设计', project: '对账系统', plannedDate: '2026-10-07' });
 
   await C.ok({ action: 'todo_complete', task: '订单导出接口重构', date: '2026-10-05', note: 'QPS 从 120 提到 900' });
   await C.ok({ action: 'todo_complete', task: '支付回调幂等性改造', date: '2026-10-06' });
   await C.ok({ action: 'log_note', title: '与产品对齐导出字段', date: '2026-10-07', project: '订单中台' });
-  // 工时是另一套台账：这几笔与上面的待办没有任何关联
-  await C.ok({ action: 'ticket_add', date: '2026-10-08', hours: 7.5, project: '订单中台', title: '联调' });
-  await C.ok({ action: 'ticket_add', date: '2026-10-09', hours: 7.5, title: '写文档' });
 
   // 锚点为 10-09（周五）：周报写的是「上周五 ~ 本周四」= 10-02 ~ 10-08
   const weekly = await C.ok({ action: 'report_create', type: 'weekly', date: '2026-10-09' });
@@ -594,27 +483,23 @@ group('5. 周报 / 月报 / 年报 与历史归档');
     assert.ok(!report.content.includes('QPS 从 120 提到 900'), '周报不展开备注');
   });
 
-  check('区间内只有 10-08 一个法定工作日（10-02~07 全是国庆假期）', () => {
-    assert.equal(report.facts.legs.workdays, 1);
-    assert.equal(report.facts.legs.planHours, 7.5);
-    assert.equal(report.facts.legs.requiredHours, 8.25);
+  check('facts 冻结区间、维度与完成数（不再有工时口径字段）', () => {
+    assert.equal(report.facts.meta.from, '2026-10-02');
+    assert.equal(report.facts.meta.to, '2026-10-08');
+    assert.equal(report.facts.meta.dimension, 'time');
+    assert.equal(report.facts.totals.done, 3);
+    assert.equal('legs' in report.facts, false);
+    assert.equal('hoursByProject' in report.facts, false);
+    assert.equal('hours' in report.facts.totals, false);
   });
 
-  check('facts 冻结完成数与项目分组（完成数来自流水，工时来自工时台账）', () => {
-    assert.equal(report.facts.totals.done, 3);
-    assert.equal(report.facts.meta.dimension, 'time');
+  check('facts 按项目分组冻结完成数与亮点', () => {
     const order = report.facts.byProject.find((group) => group.name === '订单中台');
     assert.ok(order, '缺少订单中台分组');
     assert.equal(order.done, 3);
-    assert.equal(order.hours, 7.5, '项目工时应当只统计挂在该项目上的工时条目');
+    assert.equal('hours' in order, false);
     assert.ok(order.highlights.some((line) => /QPS 从 120 提到 900/.test(line)));
-  });
-
-  check('报表里的工时口径来自 days，不是流水里的 hours', () => {
-    // 区间是 10-02~10-08，只有 10-08 那张 7.5h 的工单落进来
-    assert.equal(report.facts.legs.loggedHours, 7.5);
-    assert.equal(report.facts.totals.hours, 7.5);
-    assert.ok(report.facts.completed.every((item) => item.hours === 0), '流水不该带工时');
+    assert.ok(report.facts.completed.every((item) => !('hours' in item)));
   });
 
   check('未完成的待办在 facts 里仍按「未完成 / 顺延」口径统计（周报正文走精简口径）', () => {
@@ -629,6 +514,7 @@ group('5. 周报 / 月报 / 年报 与历史归档');
     assert.equal(report.facts.next.from, '2026-10-09');
     assert.equal(report.facts.next.to, '2026-10-15', '下一期还是周五 ~ 周四');
     assert.ok(report.facts.next.planned.some((item) => item.title === '对账系统灰度方案设计'));
+    assert.ok(report.facts.next.planned.every((item) => !('estimateHours' in item)));
   });
 
   const projectReport = await C.ok({ action: 'report_create', type: 'project', project: '订单中台', date: '2026-10-05' });
@@ -670,17 +556,17 @@ group('5. 周报 / 月报 / 年报 与历史归档');
 
   const contentBefore = (await C.get('report', { id: reportId })).view.content;
   await C.ok({ action: 'todo_complete', task: '对账系统灰度方案设计', date: '2026-10-07' });
-  await C.ok({ action: 'ticket_add', date: '2026-10-12', hours: 7.5, title: '补录' });
+  await C.ok({ action: 'log_note', title: '补录', date: '2026-10-12' });
   const contentAfter = (await C.get('report', { id: reportId })).view.content;
-  check('归档之后补录工时，历史报表内容一字不变', () => {
+  check('归档之后新增流水，历史报表内容一字不变', () => {
     assert.equal(contentAfter, contentBefore);
   });
 
   await checkAsync('实时重算的月报能看到补录的内容（冻结的只是已归档的那份）', async () => {
     const monthly = await C.ok({ action: 'report_create', type: 'monthly', date: '2026-10-05' });
     assert.match(monthly.data.report.content, /对账系统灰度方案设计/);
-    assert.equal(monthly.data.report.facts.totals.done, 4);
-    assert.equal(monthly.data.report.facts.legs.loggedHours, 22.5);
+    assert.equal(monthly.data.report.facts.totals.done, 5);
+    assert.equal('legs' in monthly.data.report.facts, false);
   });
 
   await checkAsync('补生成的历史周报不会被「后来做完了」改写', async () => {
@@ -738,17 +624,18 @@ group('6. 统计（日 / 月 / 年）');
     assert.equal(monthly.view.buckets[9].key, '2026-10');
   });
 
-  check('10 月桶的完成数（来自流水）与工时（来自工时台账）各自独立', () => {
+  check('10 月桶的完成数来自流水', () => {
     const october = monthly.view.buckets.find((item) => item.key === '2026-10');
-    assert.equal(october.done, 4);
-    assert.equal(october.hours, 22.5);
+    assert.equal(october.done, 5);
     assert.ok(october.completionRate > 0);
+    assert.equal('hours' in october, false);
   });
 
-  check('全年区间给出法定工作日与必须工时', () => {
-    assert.equal(monthly.view.legs.workdays, 248);
-    assert.equal(monthly.view.legs.planHours, 1860);
-    assert.equal(monthly.view.legs.requiredHours, 2046);
+  check('统计不再返回工时口径字段（legs / byProject / hours）', () => {
+    assert.equal('legs' in monthly.view, false);
+    assert.equal('byProject' in monthly.view, false);
+    assert.equal('hours' in monthly.view.totals, false);
+    assert.ok(monthly.view.buckets.every((bucket) => !('hours' in bucket)));
   });
 
   const daily = await C.get('stats', { dim: 'day', from: '2026-10-05', to: '2026-10-11' });
@@ -766,12 +653,14 @@ group('6. 统计（日 / 月 / 年）');
     assert.ok(Array.isArray(yearly.view.heatmap));
     assert.equal(yearly.view.heatmap.length, 365);
     assert.ok(yearly.view.heatmap.every((cell) => typeof cell.level === 'number' && cell.weekday >= 0 && cell.weekday <= 6));
+    assert.ok(yearly.view.heatmap.every((cell) => typeof cell.date === 'string' && typeof cell.count === 'number'));
+    assert.ok(yearly.view.heatmap.every((cell) => !('hours' in cell) && !('workday' in cell)));
   });
 
   const scoped = await C.get('stats', { dim: 'month', from: '2026-10-01', to: '2026-10-31', projectId: C_PROJECT.recon });
-  check('按项目过滤统计：对账系统完成了 1 项，但工时台账里没有它的工时', () => {
+  check('按项目过滤统计：对账系统完成了 1 项', () => {
     assert.equal(scoped.view.totals.done, 1);
-    assert.equal(scoped.view.totals.hours, 0);
+    assert.equal('hours' in scoped.view.totals, false);
   });
 
   const reversed = await C.get('stats', { dim: 'month', from: '2026-12-31', to: '2026-01-01' });
@@ -786,14 +675,14 @@ group('6. 统计（日 / 月 / 年）');
  * 7. Agent 工具
  * ------------------------------------------------------------------ */
 
-group('7. Agent 工具（workbench_todo / workbench_hours / workbench_report）');
+group('7. Agent 工具（workbench_todo / workbench_report）');
 {
   const D = await harness('tools');
 
-  check('三个工具都已注册', () => {
+  check('两个工具都已注册，工时工具已不存在', () => {
     assert.ok(D.tools.has('workbench_todo'));
-    assert.ok(D.tools.has('workbench_hours'));
     assert.ok(D.tools.has('workbench_report'));
+    assert.equal(D.tools.has('workbench_hours'), false);
   });
 
   const missingProject = await D.tool('workbench_todo', { action: 'add', title: '写单元测试', project: '不存在的项目', date: '2026-10-12' });
@@ -815,46 +704,13 @@ group('7. Agent 工具（workbench_todo / workbench_hours / workbench_report）'
   });
 
   const completeOut = await D.tool('workbench_todo', { action: 'complete', task: '单元测试', date: '2026-10-12' });
-  check('workbench_todo complete 支持标题部分匹配，且不产生任何工时', () => {
+  check('workbench_todo complete 支持标题部分匹配', () => {
     assert.match(completeOut, /✅ 完成/);
-    assert.doesNotMatch(completeOut, /今日工时/);
-  });
-
-  await D.tool('workbench_hours', { action: 'ticket_add', date: '2026-10-12', hours: 3, title: '写单元测试' });
-  const afterLog = await D.tool('workbench_hours', { action: 'month', month: '2026-10', date: '2026-10-12' });
-  check('工单是记工时的唯一方式，记完当月就有 3h', () => {
-    assert.match(afterLog, /3h/);
-    assert.match(afterLog, /写单元测试/, '月度总览里应当能看到这张工单');
   });
 
   const listOut = await D.tool('workbench_todo', { action: 'list', status: 'done', date: '2026-10-12' });
   check('workbench_todo list 可按状态过滤', () => {
     assert.match(listOut, /写单元测试/);
-  });
-
-  const hoursOut = await D.tool('workbench_hours', { action: 'month', month: '2026-10', date: '2026-10-12' });
-  check('workbench_hours month 输出计划 / 必须 / 已录 / 日需工时', () => {
-    assert.match(hoursOut, /必须工时/);
-    assert.match(hoursOut, /148\.5h/);
-    assert.match(hoursOut, /日需工时/);
-    assert.match(hoursOut, /标准/);
-  });
-
-  const calendarOut = await D.tool('workbench_hours', { action: 'calendar', month: '2026-10', date: '2026-10-12' });
-  check('workbench_hours calendar 输出月历与图例', () => {
-    assert.match(calendarOut, /图例/);
-    assert.match(calendarOut, /调/);
-  });
-
-  const dayOut = await D.tool('workbench_hours', { action: 'day', date: '2026-10-12' });
-  check('workbench_hours day 输出当天明细', () => {
-    assert.match(dayOut, /2026-10-12/);
-    assert.match(dayOut, /3h/);
-  });
-
-  const trendOut = await D.tool('workbench_hours', { action: 'trend', months: 3, date: '2026-10-12' });
-  check('workbench_hours trend 输出达成率趋势', () => {
-    assert.match(trendOut, /达成/);
   });
 
   // 锚点 10-16（周五）→ 区间 10-09 ~ 10-15，正好兜住 10-12 那些活
@@ -897,6 +753,7 @@ group('7. Agent 工具（workbench_todo / workbench_hours / workbench_report）'
   check('workbench_report stats 输出统计表', () => {
     assert.match(statsOut, /📈 统计/);
     assert.match(statsOut, /完成率/);
+    assert.doesNotMatch(statsOut, /工时/);
   });
 
   const listOut2 = await D.tool('workbench_report', { action: 'list', date: '2026-10-12' });
@@ -915,28 +772,21 @@ group('7. Agent 工具（workbench_todo / workbench_hours / workbench_report）'
  * ------------------------------------------------------------------ */
 
 const E = await harness('settings', {
-  dailyHours: 7.5,
-  grade: 'senior',
-  gradeLabel: '测试职级',
-  gradeFactor: 1.1,
+  holidayOverrides: { '2026-10-13': 'holiday' },
 });
 
 group('8. 设置、节假日覆盖与协议边界');
 {
   const boot = await E.get('bootstrap');
-  check('行 config 种入默认值并标记已 seeding', () => {
-    assert.equal(boot.view.settings.dailyHours, 7.5);
-    assert.equal(boot.view.settings.gradeFactor, 1.1);
-    assert.equal(boot.view.settings.gradeLabel, '测试职级');
+  check('行 config 种入默认节假日覆盖并标记已 seeding', () => {
+    assert.equal(boot.view.settings.holidayOverrides['2026-10-13'], 'holiday');
     assert.equal(E.readState().meta.seeded, true);
   });
 
   await checkAsync('重启后不被行 config 覆盖用户设置（seeded 保留）', async () => {
-    const restarted = await harness('settings', { dailyHours: 1, gradeFactor: 2, gradeLabel: '不该出现' });
+    const restarted = await harness('settings', { holidayOverrides: { '2026-10-13': 'workday' } });
     const boot2 = await restarted.get('bootstrap');
-    assert.equal(boot2.view.settings.dailyHours, 7.5);
-    assert.equal(boot2.view.settings.gradeFactor, 1.1);
-    assert.equal(boot2.view.settings.gradeLabel, '测试职级');
+    assert.equal(boot2.view.settings.holidayOverrides['2026-10-13'], 'holiday');
   });
 
   await checkAsync('自定义报表模板覆盖周报内置版式', async () => {
@@ -949,33 +799,27 @@ group('8. 设置、节假日覆盖与协议边界');
     await E.ok({ action: 'settings_update', settings: { reportTemplate: '' } });
   });
 
-  await E.ok({ action: 'settings_update', settings: { dailyHours: 8, gradeFactor: 1.2 } });
-  await checkAsync('设置更新后工时公式跟着走：18 × 8 = 144 → 必须 172.8', async () => {
-    const view = await E.get('hours', { month: '2026-10' });
-    assert.equal(view.view.planHours, 144);
-    assert.equal(view.view.requiredHours, 172.8);
-    assert.equal(view.view.dailyHours, 8);
+  await checkAsync('settings_update 改设置后 bootstrap 反映新值', async () => {
+    const updated = await E.ok({ action: 'settings_update', settings: { reportFooter: '测试页脚', rolloverPolicy: 'backlog' } });
+    assert.equal(updated.data.settings.reportFooter, '测试页脚');
+    const boot2 = await E.get('bootstrap');
+    assert.equal(boot2.view.settings.reportFooter, '测试页脚');
+    assert.equal(boot2.view.settings.rolloverPolicy, 'backlog');
+    await E.ok({ action: 'settings_update', settings: { reportFooter: '', rolloverPolicy: 'always' } });
   });
 
-  await E.ok({ action: 'settings_update', settings: { dailyHours: 7.5, gradeFactor: 1.1 } });
-
   await E.ok({ action: 'holiday_override_set', date: '2026-10-13', kind: 'holiday' });
-  await checkAsync('手工把 10-13 标为放假日 → 全月工作日少一天', async () => {
-    const view = await E.get('hours', { month: '2026-10' });
-    assert.equal(view.view.workdays, 17);
-    assert.equal(view.view.days.find((item) => item.key === '2026-10-13').kind, 'holiday');
+  await checkAsync('手工把 10-13 标为放假日 → 当天日期性质随之改变', async () => {
+    const view = await E.get('today', { date: '2026-10-13' });
+    assert.equal(view.view.kind, 'holiday');
+    assert.equal(view.view.workday, false);
   });
 
   await E.ok({ action: 'holiday_override_clear', date: '2026-10-13' });
-  await checkAsync('取消覆盖后恢复 18 天', async () => {
-    assert.equal((await E.get('hours', { month: '2026-10' })).view.workdays, 18);
-  });
-
-  await checkAsync('2027 年数据未导入时明确告警而不是静默估算', async () => {
-    const view = await E.get('hours', { month: '2027-03' });
-    assert.equal(view.view.coverage.complete, false);
-    assert.deepEqual(view.view.coverage.uncoveredYears, ['2027']);
-    assert.equal(view.view.workdays, 23); // 2027-03 周一~周五
+  await checkAsync('取消覆盖后恢复法定工作日性质', async () => {
+    const view = await E.get('today', { date: '2026-10-13' });
+    assert.equal(view.view.kind, 'workday');
+    assert.equal(view.view.workday, true);
   });
 
   await E.day('2026-10-01');
@@ -1011,7 +855,7 @@ group('8. 设置、节假日覆盖与协议边界');
   });
 
   await checkAsync('未知 view 不影响业务结果，只回退到默认视图', async () => {
-    const res = await E.raw({ action: 'settings_update', view: 'zzz', settings: { dailyHours: 7.6 } });
+    const res = await E.raw({ action: 'settings_update', view: 'zzz', settings: { reportFooter: '页脚' } });
     assert.equal(res.json.result.ok, true);
     assert.ok(res.json.view);
   });
@@ -1085,10 +929,9 @@ group('10. 脏数据与持久化健壮性');
   const file = G0.stateFile;
   const raw = JSON.parse(readFileSync(file, 'utf8'));
   // 注入各种脏值
-  raw.settings.dailyHours = 'abc';
+  raw.settings.rolloverPolicy = 'nonsense';
   raw.settings.holidayOverrides = { '2026-10-13': 'nonsense', bad: 'holiday' };
   raw.todos.push({ id: 'broken', title: 123, priority: 'P9', rolloverCount: -5, plannedDate: 'not-a-date' });
-  raw.days['2026-10-13'] = { status: 'weird', entries: 'nope' };
   raw.reports.push({ id: 'wrong', type: 'zzz', from: null });
   raw.rolloverLog = { '2026-10-13': 'x' };
   writeFileSync(file, JSON.stringify(raw));
@@ -1105,7 +948,7 @@ group('10. 脏数据与持久化健壮性');
 
   check('脏值被夹紧或丢弃', () => {
     const state = G.readState();
-    assert.equal(state.settings.dailyHours, 7.5);
+    assert.equal(state.settings.rolloverPolicy, 'always');
     assert.deepEqual(state.settings.holidayOverrides, {});
     const broken = state.todos.find((item) => item.id === 'broken');
     assert.equal(broken.priority, 'P2');
@@ -1143,14 +986,6 @@ group('11. 项目引用解析（空串 projectId 不能吞掉 project 参数）'
     assert.equal(created.data.todo.projectId, H.readState().projects[0].id);
   });
 
-  const logged = await H.ok({ action: 'ticket_add', date: '2026-10-12', hours: 3, title: '空串项目', projectId: '', project: '订单中台' });
-  check('ticket_add 同样不被空串短路', () => {
-    const state = H.readState();
-    const entry = state.days['2026-10-12'].entries.find((item) => item.ticketId === logged.data.id);
-    assert.ok(entry, '没找到这条工单写出的工时条目');
-    assert.equal(entry.projectId, state.projects[0].id);
-  });
-
   const noted = await H.ok({ action: 'log_note', title: '随手记', date: '2026-10-12', projectId: '', project: '订单中台' });
   check('log_note 同样不被空串短路', () => {
     const log = H.readState().logs.find((item) => item.id === noted.data.id);
@@ -1176,51 +1011,55 @@ group('11. 项目引用解析（空串 projectId 不能吞掉 project 参数）'
 }
 
 /* ------------------------------------------------------------------ *
- * 12. 待办与工时是两套台账
+ * 12. 完成待办写流水
  * ------------------------------------------------------------------ */
 
 const I = await harness('ledgers');
 
-group('12. 待办与工时是两套台账（互不写入）');
+group('12. 完成待办写流水，撤销作废流水');
 {
   await I.ok({ action: 'project_create', name: '订单中台', emoji: '📦' });
-  await I.ok({ action: 'todo_create', title: '写技术方案', project: '订单中台', plannedDate: '2026-10-12', estimateHours: 8 });
+  await I.ok({ action: 'todo_create', title: '写技术方案', project: '订单中台', plannedDate: '2026-10-12' });
 
   await I.ok({ action: 'todo_complete', task: '写技术方案' });
-  check('完成待办不会产生任何工时记录', () => {
+  check('完成待办产生一条有效流水', () => {
     const state = I.readState();
-    assert.deepEqual(Object.keys(state.days), []);
     assert.equal(state.logs.filter((item) => !item.voided).length, 1);
-    assert.equal(state.logs[0].hours, 0, '流水不该承载工时');
+    assert.equal(state.logs[0].title, '写技术方案');
+    assert.equal(state.logs[0].source, 'todo');
+    assert.equal(state.logs[0].projectId, state.projects[0].id);
   });
 
   await I.ok({ action: 'todo_undo', task: '写技术方案' });
-  check('撤销待办同样不牵动工时台账', () => {
-    assert.deepEqual(Object.keys(I.readState().days), []);
+  check('撤销待办作废那条流水，待办回到未完成', () => {
+    const state = I.readState();
+    assert.equal(state.logs[0].voided, true);
+    assert.ok(state.logs[0].voidedAt);
+    const todo = state.todos.find((item) => item.title === '写技术方案');
+    assert.equal(todo.status, 'open');
+    assert.equal(todo.logId, null);
   });
 
   await I.ok({ action: 'log_note', title: '与产品对齐字段', date: '2026-10-12', project: '订单中台' });
-  const logsBefore = I.readState().logs.filter((item) => !item.voided).length;
-
-  await I.ok({ action: 'ticket_add', date: '2026-10-12', hours: 7.5, project: '订单中台', title: '一张工单' });
-  check('记工时不会产生流水', () => {
-    assert.equal(I.readState().logs.filter((item) => !item.voided).length, logsBefore);
+  check('随手记写一条流水', () => {
+    const active = I.readState().logs.filter((item) => !item.voided);
+    assert.equal(active.length, 1);
+    assert.equal(active[0].title, '与产品对齐字段');
+    assert.equal(active[0].source, 'manual');
+    assert.equal(active[0].projectId, I.readState().projects[0].id);
   });
 
-  await I.ok({ action: 'ticket_remove', id: I.readState().tickets[0].id });
-  check('删工时不会作废流水', () => {
-    assert.equal(I.readState().logs.filter((item) => !item.voided).length, logsBefore);
-    assert.deepEqual(Object.keys(I.readState().days), []);
+  const noteOut = await I.ok({ action: 'log_note', title: '再记一条', date: '2026-10-12' });
+  check('多条流水互不覆盖', () => {
+    const active = I.readState().logs.filter((item) => !item.voided);
+    assert.equal(active.length, 2);
+    assert.ok(active.some((item) => item.id === noteOut.data.id));
   });
 
-  const noteOut = await I.ok({ action: 'log_note', title: '带 hours 的随手记', date: '2026-10-12', hours: 3 });
-  check('随手记即使传了 hours 也不写进工时台账', () => {
-    assert.deepEqual(Object.keys(I.readState().days), []);
-    assert.equal(I.readState().logs.find((item) => item.id === noteOut.data.id).hours, 0);
-  });
-
-  check('待办的 schema 里已经不存在 actualHours', () => {
-    assert.equal('actualHours' in I.readState().todos[0], false);
+  check('待办 schema 不含工时字段', () => {
+    const todo = I.readState().todos[0];
+    assert.equal('estimateHours' in todo, false);
+    assert.equal('actualHours' in todo, false);
   });
 }
 
@@ -1436,146 +1275,6 @@ group('15. 「添加进周报文件」插到文件开头');
 }
 
 /* ------------------------------------------------------------------ *
- * 16. 工单
- * ------------------------------------------------------------------ */
-
-const M = await harness('tickets');
-
-group('16. 工单：录入 / 与工时台账只对一次账');
-{
-  await M.ok({ action: 'project_create', name: '示例银行', emoji: '🏦' });
-  await M.ok({ action: 'project_create', name: '示例政务客户二期', emoji: '🏛' });
-
-  const noHours = await M.ok({
-    action: 'ticket_add',
-    title: '密评整改相关优化',
-    project: '示例政务客户二期',
-    url: 'https://issuetrack.example.com/issues/10001',
-    date: '2026-10-09',
-    hours: null,
-  });
-  check('无工时的工单：照常入库，但不产生工时条目', () => {
-    assert.match(noHours.message, /无工时/);
-    const state = M.readState();
-    assert.equal(state.tickets.length, 1);
-    assert.equal(state.tickets[0].url, 'https://issuetrack.example.com/issues/10001');
-    assert.equal(state.days['2026-10-09'], undefined, '无工时不该产生工时记录');
-  });
-
-  const withHours = await M.ok({
-    action: 'ticket_add',
-    title: '排障 #10002联通',
-    project: '示例银行',
-    url: 'https://issuetrack.example.com/issues/10002',
-    date: '2026-10-14',
-    hours: 17,
-  });
-  check('带工时的工单：同时写进工时台账，且带 ticketId 关联', () => {
-    const state = M.readState();
-    const day = state.days['2026-10-14'];
-    assert.ok(day, '没写进工时台账');
-    assert.equal(day.entries.length, 1);
-    assert.equal(day.entries[0].hours, 17);
-    assert.equal(day.entries[0].ticketId, withHours.data.id, '条目必须能认回工单');
-    assert.equal(day.entries[0].note, '排障 #10002联通');
-  });
-
-  const noted = await M.ok({
-    action: 'ticket_add',
-    title: '修改发送接口变量空字符串校验',
-    project: '示例银行',
-    url: 'https://issuetrack.example.com/issues/10003',
-    date: '2026-10-16',
-    hours: 1,
-    note: '不改',
-    type: '任务',
-  });
-
-  await checkAsync('工单类型：任意短文字可用，非文字被拒绝', async () => {
-    const view = await M.get('hours', { month: '2026-10' });
-    const noted2 = view.view.tickets.find((item) => item.title === '修改发送接口变量空字符串校验');
-    assert.equal(noted2.type, '任务');
-    const first = view.view.tickets.find((item) => item.title === '密评整改相关优化');
-    assert.equal(first.type, '', '没给类型时是空串，不是 undefined');
-
-    const bad = await M.post({ action: 'ticket_add', title: '类型不对', type: 123 });
-    assert.equal(bad.json.result.ok, false);
-    assert.match(bad.json.result.error, /类型/);
-
-    // 旧版本/公司专属的类型名也要能原样保留，不再按白名单丢弃。
-    await M.ok({ action: 'ticket_update', id: noted2.id, type: '售后' });
-    const after = await M.get('hours', { month: '2026-10' });
-    assert.equal(after.view.tickets.find((item) => item.title === '修改发送接口变量空字符串校验').type, '售后');
-  });
-
-  await checkAsync('本月工单一览：按日期排序，带项目名与完成度', async () => {
-    const view = await M.get('hours', { month: '2026-10' });
-    const tickets = view.view.tickets;
-    assert.equal(tickets.length, 3);
-    assert.deepEqual(tickets.map((item) => item.date), ['2026-10-09', '2026-10-14', '2026-10-16']);
-    assert.equal(tickets[0].projectName, '示例政务客户二期');
-    assert.equal(tickets[0].hours, null);
-    assert.equal(tickets[2].note, '不改');
-    assert.equal(view.view.ticketHours, 18);
-    assert.equal(view.view.loggedHours, 18, '工单小时必须就是已录工时');
-  });
-
-  const onlyHours = await M.ok({ action: 'ticket_update', id: withHours.data.id, hours: 10 });
-  check('只改小时数时，提示语只报「工时」', () => {
-    assert.equal(onlyHours.message, '已更新工单「排障 #10002联通」：工时');
-  });
-  await checkAsync('改工单小时数：工时台账跟着变，不会叠加成两条', async () => {
-    const state = M.readState();
-    const day = state.days['2026-10-14'];
-    assert.equal(day.entries.length, 1, `应当只有一条条目，实际 ${day.entries.length}`);
-    assert.equal(day.entries[0].hours, 10);
-    const view = await M.get('hours', { month: '2026-10' });
-    assert.equal(view.view.loggedHours, 11); // 10 + 1
-    assert.equal(view.view.ticketHours, 11);
-  });
-
-  await M.ok({ action: 'ticket_update', id: withHours.data.id, date: '2026-10-15', project: '示例政务客户二期' });
-  await checkAsync('改日期 / 改项目：条目跟着迁移，旧日期不留残影', async () => {
-    const state = M.readState();
-    assert.equal(state.days['2026-10-14'], undefined, '旧日期的记录应当被收掉');
-    assert.equal(state.days['2026-10-15'].entries[0].hours, 10);
-    assert.equal(state.days['2026-10-15'].entries[0].projectId, state.tickets.find((t) => t.id === withHours.data.id).projectId);
-    const view = await M.get('hours', { month: '2026-10' });
-    assert.equal(view.view.loggedHours, 11, '总数不该变');
-  });
-
-  await M.ok({ action: 'ticket_update', id: withHours.data.id, hours: null });
-  check('把工单改成「无工时」，对应条目要收回', () => {
-    const state = M.readState();
-    assert.equal(state.days['2026-10-15'], undefined);
-  });
-
-  await M.ok({ action: 'ticket_remove', id: noted.data.id });
-  await checkAsync('删工单：连同它带的小时一起消失', async () => {
-    const state = M.readState();
-    assert.equal(state.tickets.length, 2);
-    assert.equal(state.days['2026-10-16'], undefined);
-    const view = await M.get('hours', { month: '2026-10' });
-    assert.equal(view.view.loggedHours, 0);
-    assert.equal(view.view.ticketHours, 0);
-  });
-
-  await checkAsync('工单标题必填、工时越界要拒绝', async () => {
-    const a = await M.post({ action: 'ticket_add', title: '   ' });
-    assert.equal(a.json.result.ok, false);
-    assert.match(a.json.result.error, /标题/);
-    const tooBig = await M.post({ action: 'ticket_add', title: '超时', hours: 301 });
-    assert.equal(tooBig.json.result.ok, false);
-    assert.match(tooBig.json.result.error, /0~300/);
-    // 300 本身要能存进去（一张「工时派发」单可能一次挂整个项目的额度）
-    const big = await M.ok({ action: 'ticket_add', title: '批量派发', hours: 300, date: '2026-10-20' });
-    assert.equal(big.data.ticket.hours, 300);
-    const shown = (await M.get('hours', { month: '2026-10' })).view.tickets.find((item) => item.title === '批量派发');
-    assert.equal(shown.hours, 300, '台账里的条目也要能到 300');
-  });
-}
-
-/* ------------------------------------------------------------------ *
  * 16b. 历史完成
  * ------------------------------------------------------------------ */
 
@@ -1671,46 +1370,36 @@ group('17. 项目建好之后可以改');
     assert.equal(project.startedAt, '2026-10-01');
   });
 
-  await checkAsync('改名不影响挂在这个项目下的待办和工单', async () => {
+  await checkAsync('改名不影响挂在这个项目下的待办', async () => {
     await N.ok({ action: 'todo_create', title: '导出接口', project: '订单中台（二期）', plannedDate: '2026-10-12' });
-    await N.ok({ action: 'ticket_add', title: '联调', project: '订单中台（二期）', date: '2026-10-12', hours: 7.5 });
     await N.ok({ action: 'project_update', id: created.data.id, name: 'OMS 项目' });
     const state = N.readState();
     assert.equal(state.todos[0].projectId, created.data.id, '待办还是挂在这个项目上');
-    assert.equal(state.tickets[0].projectId, created.data.id, '工单也还在');
     const view = await N.get('projects');
     assert.equal(view.view[0].name, 'OMS 项目');
     assert.equal(view.view[0].totalCount, 1);
+    assert.equal('hours' in view.view[0], false);
   });
 
-  await checkAsync('项目「投入工时」跟着工单走，而不是永远 0h', async () => {
-    const before = await N.get('projects');
-    const target = before.view.find((item) => item.name === 'OMS 项目');
-    assert.ok(target, '找不到 OMS 项目');
-    const base = target.hours;
-
-    await N.ok({ action: 'ticket_add', title: '联调', project: 'OMS 项目', date: '2026-10-20', hours: 7.5 });
-    await N.ok({ action: 'ticket_add', title: '写文档', project: 'OMS 项目', date: '2026-10-22', hours: 3 });
-    const grown = (await N.get('projects')).view.find((item) => item.name === 'OMS 项目');
-    assert.equal(grown.hours, base + 10.5, `投入工时应增加 10.5h，实际 ${grown.hours}`);
-    assert.equal(grown.lastActivity, '2026-10-22', '最近活动应当跟着工单日期走');
-
-    const month = await N.get('hours', { month: '2026-10' });
-    const ticket = month.view.tickets.find((item) => item.title === '联调');
-    await N.ok({ action: 'ticket_update', id: ticket.id, hours: 2 });
-    const shrunk = (await N.get('projects')).view.find((item) => item.name === 'OMS 项目');
-    // 原来是 7.5 + 3，把 7.5 改成 2 之后是 2 + 3
-    assert.equal(shrunk.hours, base + 5, `改小时数后应当是 ${base + 5}h，实际 ${shrunk.hours}`);
+  await checkAsync('项目的最近活动来自流水，且不返回工时字段', async () => {
+    const before = (await N.get('projects')).view.find((item) => item.name === 'OMS 项目');
+    assert.equal(before.lastActivity, null);
+    await N.ok({ action: 'log_note', title: '联调', project: 'OMS 项目', date: '2026-10-12' });
+    const after = (await N.get('projects')).view.find((item) => item.name === 'OMS 项目');
+    assert.equal(after.lastActivity, '2026-10-12');
+    assert.equal('hours' in after, false);
   });
 
-  await checkAsync('别的项目的工单不会算进来', async () => {
+  await checkAsync('项目之间流水各自独立', async () => {
     await N.ok({ action: 'project_create', name: '另一个项目' });
-    await N.ok({ action: 'ticket_add', title: '别人的活', project: '另一个项目', date: '2026-10-21', hours: 4 });
+    await N.ok({ action: 'log_note', title: '别人的活', project: '另一个项目', date: '2026-10-12' });
     const view = (await N.get('projects')).view;
     const other = view.find((item) => item.name === '另一个项目');
     const mine = view.find((item) => item.name === 'OMS 项目');
-    assert.equal(other.hours, 4, '新项目只该有它自己的 4h');
-    assert.ok(mine.hours > other.hours, '两个项目的工时应各自独立');
+    assert.equal(other.lastActivity, '2026-10-12');
+    assert.equal(mine.lastActivity, '2026-10-12');
+    assert.equal(other.totalCount, 0);
+    assert.equal(mine.totalCount, 1);
   });
 
   await checkAsync('状态可以来回切，归档会记时间戳', async () => {
