@@ -7,7 +7,7 @@
  * 全部业务逻辑在同目录的 lib/ 下：
  *   lib/util.js      日期与数值工具
  *   lib/calendar.js  中国法定工作日日历（data/china-holidays.json）
- *   lib/state.js     状态模型 + 惰性顺延引擎（唯一权威）
+ *   lib/state.js     状态模型 + 惰性补算引擎（唯一权威）
  *   lib/domain.js    派生视图（今日/待办/项目/统计）
  *   lib/reports.js   报表 fact 聚合 + Markdown 渲染
  *   lib/actions.js   全部写操作
@@ -59,7 +59,7 @@ export function apply(ctx, config) {
   };
 
   /**
-   * 在串行事务里读改写状态：先把顺延补算推到目标日期，再执行调用方逻辑，最后原子落盘。
+   * 在串行事务里读改写状态：先把自动带入补算推到目标日期，再执行调用方逻辑，最后原子落盘。
    * @param date 目标日期（空 = 今天）
    * @param fn (state, key, rollover) => value
    * @returns {{ value, rollover }}
@@ -158,8 +158,8 @@ export function apply(ctx, config) {
             const url = new URL(String(req.url ?? ROUTE), 'http://localhost');
 
             if (req.method === 'GET') {
-              // `today` 驱动顺延补算；`date` 只是视图要看的那一天。两者分开，
-              // 才能做到「查看历史某天，但顺延仍然只推进到今天」。
+              // `today` 驱动自动带入补算；`date` 只是视图要看的那一天。两者分开，
+              // 才能做到「查看历史某天，但带入仍然只推进到今天」。
               const runKey = isKey(url.searchParams.get('today')) ? url.searchParams.get('today') : dayKeyOf();
               const payload = await run(runKey, (state, key) => {
                 const view = viewOf(state, key, url.searchParams);
@@ -261,7 +261,7 @@ export function apply(ctx, config) {
   console.log(`[ai-workbench] 已就绪：${ROUTE} · 工具 workbench_todo / workbench_report`);
 }
 
-/** 把顺延结果压成给前端用的小结（没有推进则为 null）。 */
+/** 把补算结果压成给前端用的小结（没有推进则为 null）。 */
 function rolloverEffect(rollover) {
   if (!rollover || !rollover.days) return null;
   return {

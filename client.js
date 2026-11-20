@@ -581,20 +581,6 @@ const CSS = `
         return data;
       }
 
-      /** 把顺延小结变成一条提示条。 */
-      function announceRollover(rollover) {
-        if (!rollover || !rollover.days) return false;
-        const bits = [`自动顺延 ${rollover.days} 天`];
-        if (rollover.moved > 0) bits.push(`${rollover.moved} 项未完成被推进`);
-        if (rollover.created > 0) bits.push(`开出 ${rollover.created} 条重复任务`);
-        if (rollover.missed > 0) bits.push(`${rollover.missed} 项到期作废`);
-        const detail = (rollover.entries || [])
-          .map((item) => `${item.title} ${String(item.from).slice(5)}→${String(item.to).slice(5)}`)
-          .join(' · ');
-        flash('roll', `🔄 ${bits.join('，')}${detail ? `｜${detail}` : ''}`, 5600);
-        return true;
-      }
-
       /** 拉取启动快照（右上角的口径摘要）。 */
       async function refreshBoot() {
         try {
@@ -620,7 +606,6 @@ const CSS = `
           // 期间又发了更新的请求 —— 这次的结果已经过期，丢掉，否则会把新数据盖回旧的
           if (seq !== viewSeq) return;
           set({ view: data.view, viewName, viewParams: params, loading: false, error: null });
-          announceRollover(data.rollover);
         } catch (error) {
           if (seq !== viewSeq) return;
           set({ loading: false, error: String((error && error.message) || error) });
@@ -652,7 +637,6 @@ const CSS = `
             return { ok: false, error: data.result && data.result.error };
           }
           if (data.result.message) flash('info', data.result.message);
-          announceRollover(data.rollover);
           refreshBoot();
           return data.result;
         } catch (error) {
@@ -825,7 +809,7 @@ const CSS = `
       if (/截止|提醒/.test(text)) return 'clock';
       if (/逾期|超期/.test(text)) return 'alert';
       if (/草稿|报表/.test(text)) return 'draft';
-      if (/积压|顺延/.test(text)) return 'backlog';
+      if (/积压/.test(text)) return 'backlog';
       return 'done';
     }
 
@@ -1092,8 +1076,6 @@ const CSS = `
               'div',
               { className: 'aw-dayhead-week' },
               h('span', null, view.weekLabel),
-              // 顺延数字贴在这天旁边：它解释「今日待办 N」里有多少是昨天推过来的
-              view.stats.carriedCount > 0 ? h('span', null, `顺延 ${view.stats.carriedCount} 项`) : null,
               banner.filter((item) => !(item.level === 'danger' && /项已逾期/.test(item.text))).length > 0
                 ? h(
                     'span',
@@ -1235,7 +1217,6 @@ const CSS = `
                                 `${todo.projectEmoji || '📁'}${todo.projectName}`,
                               )
                             : null,
-                          todo.carried ? h('span', null, `顺延 ${todo.rolloverCount} 天后完成`) : null,
                         ),
                       ),
                       todo.note ? h('span', { className: 'aw-note', title: todo.note }, '备注') : null,
@@ -1374,17 +1355,6 @@ const CSS = `
               `${todo.projectEmoji || '📁'}${todo.projectName}`,
             )
           : h('span', { key: 'pj' }, '非项目事务'),
-        todo.carried
-          ? h(
-              'span',
-              {
-                key: 'carry',
-                className: todo.carriedLevel === 'high' ? 'is-danger' : todo.carriedLevel === 'mid' ? 'is-warn' : undefined,
-                style: { fontWeight: todo.carriedLevel === 'high' ? 600 : 400 },
-              },
-              `顺延 ${todo.rolloverCount} 天`,
-            )
-          : null,
         todo.progress > 0 && todo.progress < 100
           ? h('span', { key: 'prog', title: '完成度（用于周报）' }, `${todo.progress}%`)
           : null,
@@ -1561,7 +1531,6 @@ const CSS = `
         plannedDate: item.plannedDate || '',
         dueDate: item.dueDate || '',
         progress: String(item.progress ?? 0),
-        rollover: item.rollover === 'inherit' ? 'inherit' : item.rollover,
       });
 
       // 换了另一条待办就重新取初始值；同一帧内即可用，不依赖 effect 触发重渲染
@@ -1579,7 +1548,6 @@ const CSS = `
           projectId: draft.projectId,
           priority: draft.priority,
           dueDate: draft.dueDate,
-          rollover: draft.rollover,
         };
         if (draft.plannedDate) payload.plannedDate = draft.plannedDate;
         if (!done) payload.progress = draft.progress === '' ? 0 : Number(draft.progress);
@@ -1649,18 +1617,6 @@ const CSS = `
             ),
             h(
               Field,
-              { label: '顺延策略' },
-              h(
-                'select',
-                { className: 'aw-select', value: draft.rollover, onChange: (event) => set({ rollover: event.target.value }) },
-                h('option', { value: 'inherit' }, '跟随全局（默认）'),
-                h('option', { value: 'always' }, '一律顺延'),
-                h('option', { value: 'backlog' }, '顺延进积压'),
-                h('option', { value: 'never' }, '到期作废'),
-              ),
-            ),
-            h(
-              Field,
               { label: '计划日' },
               h('input', {
                 className: 'aw-input',
@@ -1725,7 +1681,6 @@ const CSS = `
         freq: 'workdays',
         weekdays: [],
         monthDays: '',
-        rollover: 'inherit',
       });
       const set = (patch) => {
         setDraft({ ...draft, ...patch });
@@ -1753,7 +1708,6 @@ const CSS = `
             priority: draft.priority,
               plannedDate: draft.plannedDate,
             repeat,
-            rollover: draft.rollover,
           })
           .then((result) => {
             if (result.ok) {
@@ -1865,18 +1819,6 @@ const CSS = `
             )
           : null,
         h(
-          Field,
-          { label: '顺延策略' },
-          h(
-            'select',
-            { className: 'aw-select', value: draft.rollover, onChange: (event) => set({ rollover: event.target.value }), title: '没做完怎么办' },
-            h('option', { value: 'inherit' }, '顺延（默认）'),
-            h('option', { value: 'always' }, '一定顺延'),
-            h('option', { value: 'backlog' }, '顺延进积压'),
-            h('option', { value: 'never' }, '到期作废'),
-          ),
-        ),
-        h(
           'div',
           { className: 'aw-submit-wrap' },
           h(Btn, { tone: 'primary', disabled: busy || !draft.title.trim(), onClick: submit }, '新建'),
@@ -1940,36 +1882,33 @@ const CSS = `
     /* ================= 项目 ================= */
 
     /**
-     * 项目编辑器：新建之后随时能改名字 / 代号 / 负责人 / 说明 / 状态 / 起止日期。
+     * 项目编辑器：新建与修改共用，字段包括项目名 / 分类 / 说明 / 状态。
      */
     function ProjectEditor(props) {
       const { api, project, busy, onClose } = props;
-      const [editing, setEditing] = React.useState({ id: null, draft: null });
-
-      if (!project) return null;
-
-      const initial = (item) => ({
-        name: item.name || '',
-        description: item.description || '',
-        status: item.status || 'active',
+      const creating = !project;
+      const initial = () => ({
+        name: project?.name || '',
+        category: project?.category || 'work',
+        description: project?.description || '',
+        status: project?.status || 'active',
       });
-
-      const draft = editing.id === project.id && editing.draft ? editing.draft : initial(project);
-      const set = (patch) => setEditing({ id: project.id, draft: { ...draft, ...patch } });
+      const [draft, setDraft] = React.useState(initial);
+      const set = (patch) => setDraft({ ...draft, ...patch });
 
       const save = () => {
         const name = draft.name.trim();
         if (!name) return;
-        api
-          .send('project_update', {
-            id: project.id,
-            name,
-            description: draft.description,
-            status: draft.status,
-          })
-          .then((result) => {
-            if (result.ok) onClose();
-          });
+        const payload = {
+          name,
+          category: draft.category,
+          description: draft.description,
+          status: draft.status,
+        };
+        if (!creating) payload.id = project.id;
+        api.send(creating ? 'project_create' : 'project_update', payload).then((result) => {
+          if (result.ok) onClose();
+        });
       };
 
       return h(
@@ -1983,13 +1922,18 @@ const CSS = `
         h(
           'div',
           { className: 'aw-modal' },
-          h('h3', null, '修改项目'),
+          h('h3', null, creating ? '新增项目' : '修改项目'),
           h(
             'div',
             { style: { display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0,1fr))', gap: 10 } },
-            h(Field, { label: '项目名', style: { gridColumn: 'span 8' } },
+            h(Field, { label: '项目名', style: { gridColumn: 'span 6' } },
               h('input', { className: 'aw-input', value: draft.name, autoFocus: true, onChange: (event) => set({ name: event.target.value }) })),
-            h(Field, { label: '状态', style: { gridColumn: 'span 4' } },
+            h(Field, { label: '分类', style: { gridColumn: 'span 3' } },
+              h('select',
+                { className: 'aw-select', value: draft.category, onChange: (event) => set({ category: event.target.value }) },
+                h('option', { value: 'work' }, '工作'),
+                h('option', { value: 'personal' }, '个人'))),
+            h(Field, { label: '状态', style: { gridColumn: 'span 3' } },
               h('select',
                 { className: 'aw-select', value: draft.status, onChange: (event) => set({ status: event.target.value }) },
                 h('option', { value: 'active' }, '进行中'),
@@ -2002,9 +1946,8 @@ const CSS = `
             'div',
             { className: 'aw-form', style: { justifyContent: 'flex-end' } },
             h(Btn, { tone: 'ghost', onClick: onClose }, '取消'),
-            h(Btn, { tone: 'primary', disabled: busy || !draft.name.trim(), onClick: save }, '保存'),
+            h(Btn, { tone: 'primary', disabled: busy || !draft.name.trim(), onClick: save }, creating ? '新建' : '保存'),
           ),
-          h('div', { className: 'aw-note' }, '改名不会影响已经挂在这个项目下的待办，它们跟着 id 走。'),
         ),
       );
     }
@@ -2013,41 +1956,20 @@ const CSS = `
       const api = props.api;
       const view = props.view;
       const busy = props.busy;
-      const [draft, setDraft] = React.useState({ name: '' });
       const [editing, setEditing] = React.useState(null);
 
       if (!Array.isArray(view)) return h(Empty, null, '加载中…');
 
-      const create = () =>
-        api.send('project_create', { name: draft.name }).then((result) => {
-          if (result.ok) setDraft({ name: '' });
-        });
-
       const statusText = { active: '进行中', paused: '暂停', archived: '已归档' };
+      const categoryText = { work: '工作', personal: '个人' };
+      const closeEditor = () => {
+        setEditing(null);
+        if (props.onCloseCreate) props.onCloseCreate();
+      };
 
       return h(
         'div',
         { style: { display: 'flex', flexDirection: 'column', gap: 14 } },
-
-        // ── 新建项目：带字段名的栅格，不再是 placeholder 一排 ──
-        h(Card, {
-          title: '新建项目',
-          children: h(
-            'div',
-            { className: 'aw-form aw-composer', style: { alignItems: 'flex-end' } },
-            h(Field, { label: '项目名', style: { flex: '1 1 260px' } },
-              h('input', {
-                className: 'aw-input',
-                placeholder: '例如：示例政务客户二期',
-                value: draft.name,
-                onChange: (event) => setDraft({ ...draft, name: event.target.value }),
-                onKeyDown: (event) => {
-                  if (event.key === 'Enter' && draft.name.trim()) create();
-                },
-              })),
-            h(Btn, { tone: 'primary', disabled: busy || !draft.name.trim(), onClick: create }, '新建'),
-          ),
-        }),
 
         view.length === 0
           ? h(Card, { children: h(Empty, null, '还没有项目。建一个，把待办挂上去。') })
@@ -2063,6 +1985,7 @@ const CSS = `
                     h('span', { style: { fontWeight: 600 } }, `${project.emoji} ${project.name}`),
                     project.code ? h('span', { className: 'aw-note' }, project.code) : null,
                     h('span', { className: 'aw-spacer' }),
+                    h(Chip, { children: categoryText[project.category] || categoryText.work }),
                     h(Chip, {
                       tone: project.status === 'active' ? 'ok' : project.status === 'archived' ? 'gold' : undefined,
                       children: statusText[project.status] || project.status,
@@ -2092,7 +2015,6 @@ const CSS = `
                       'div',
                       { className: 'aw-chips' },
                       h(Chip, { children: `进行中 ${project.openCount}` }),
-                      project.carriedCount > 0 ? h(Chip, { tone: 'warn', children: `顺延 ${project.carriedCount}` }) : null,
                       project.overdueCount > 0 ? h(Chip, { tone: 'danger', children: `逾期 ${project.overdueCount}` }) : null,
                       project.lastActivity ? h(Chip, { children: `最近 ${project.lastActivity.slice(5)}` }) : null,
                     ),
@@ -2112,7 +2034,6 @@ const CSS = `
                                 onChange: () => api.send('todo_complete', { id: todo.id }),
                               }),
                               h('div', { className: 'aw-row-main' }, h('div', { className: 'aw-row-title', style: { fontSize: 12.5 } }, todo.title)),
-                              todo.carried ? h('span', { className: 'aw-note' }, `顺延 ${todo.rolloverCount} 天`) : null,
                             ),
                           ),
                           project.nextTodos.length > 3
@@ -2135,7 +2056,15 @@ const CSS = `
               ),
             ),
 
-        h(ProjectEditor, { api, project: editing, busy, onClose: () => setEditing(null) }),
+        editing || props.createOpen
+          ? h(ProjectEditor, {
+              key: editing ? editing.id : 'new',
+              api,
+              project: editing,
+              busy,
+              onClose: closeEditor,
+            })
+          : null,
       );
     }
 
@@ -2153,7 +2082,7 @@ const CSS = `
       const [dimension, setDimension] = React.useState('time');
       const [type, setType] = React.useState('weekly');
       const [date, setDate] = React.useState(localToday());
-      // 周报区间：null 表示跟着 date 走（周五~周四），有值表示用户改过
+      // 周报区间：null 表示跟着 date 走（本周一~周五），有值表示用户改过
       const [weekCustom, setWeekCustom] = React.useState(null);
       const [projectId, setProjectId] = React.useState('');
       const [status, setStatus] = React.useState('all');
@@ -2269,7 +2198,7 @@ const CSS = `
                     style: { width: 150 },
                     type: 'date',
                     value: (weekCustom ?? reportWeek(date)).from,
-                    title: '周报区间起点（默认周五）',
+                    title: '周报区间起点',
                     onChange: (event) =>
                       setWeekCustom({ from: event.target.value, to: (weekCustom ?? reportWeek(date)).to }),
                   }),
@@ -2280,7 +2209,7 @@ const CSS = `
                     style: { width: 150 },
                     type: 'date',
                     value: (weekCustom ?? reportWeek(date)).to,
-                    title: '周报区间终点（默认周四）',
+                    title: '周报区间终点',
                     onChange: (event) =>
                       setWeekCustom({ to: event.target.value, from: (weekCustom ?? reportWeek(date)).from }),
                   }),
@@ -2292,7 +2221,7 @@ const CSS = `
                           small: true,
                           tone: 'ghost',
                           onClick: () => setWeekCustom(null),
-                          title: '回到「上周五 ~ 本周四」',
+                          title: '回到本周一 ~ 本周五',
                         },
                         '回到默认',
                       )
@@ -2309,9 +2238,6 @@ const CSS = `
                   title: dimension === 'time' ? '以这一天定位所在周 / 月 / 年' : '以这一天定位所在月',
                 }),
             h(Btn, { tone: 'primary', disabled: busy, onClick: generate }, '生成草稿'),
-            dimension === 'time' && type === 'weekly'
-              ? h('span', { className: 'aw-note' }, '默认是「上周五 ~ 本周四」，可以自己改。')
-              : h('span', { className: 'aw-note' }, '草稿从真实流水汇总而来；facts 会冻结进报表，之后补录不影响它。'),
           ),
         }),
 
@@ -2448,17 +2374,16 @@ const CSS = `
     }
 
     /**
-     * 周报的默认区间：「上周五 ~ 本周四」，也就是**已经过完的那一周**。
-     * 终点取 key 当天或之前最近的周四，起点再往前推 6 天（与宿主 resolveReportRange 一致）。
+     * 周报的默认区间：本周一到本周五（与宿主 resolveReportRange 一致）。
      */
     function reportWeek(key) {
       const base = new Date(`${key}T00:00:00`);
       const safe = Number.isNaN(base.getTime()) ? new Date() : base;
-      const back = (safe.getDay() - 4 + 7) % 7; // 0=周日 … 4=周四
-      const to = new Date(safe);
-      to.setDate(to.getDate() - back);
-      const from = new Date(to);
-      from.setDate(from.getDate() - 6);
+      const back = (safe.getDay() + 6) % 7; // 0=周一 … 6=周日
+      const from = new Date(safe);
+      from.setDate(from.getDate() - back);
+      const to = new Date(from);
+      to.setDate(to.getDate() + 4);
       return { from: keyOf(from), to: keyOf(to) };
     }
 
@@ -2567,8 +2492,6 @@ const CSS = `
               h(Metric, { label: '完成', value: String(totals.done), unit: '项' }),
               h(Metric, { label: '新建', value: String(totals.created), unit: '项' }),
               h(Metric, { label: '完成率', value: pctText(totals.completionRate), tone: totals.completionRate >= 80 ? 'ok' : 'danger' }),
-              h(Metric, { label: '按时完成率', value: pctText(totals.onTimeRate), tone: totals.onTimeRate >= 80 ? 'ok' : undefined }),
-              h(Metric, { label: '顺延次数', value: String(totals.rolledOut) }),
               h(Metric, { label: '漏做 / 放弃', value: `${totals.missed} / ${totals.dropped}` }),
             ),
             h(Bar, { ratio: totals.completionRate / 100, tone: totals.completionRate >= 80 ? undefined : 'gold' }),
@@ -2636,8 +2559,6 @@ const CSS = `
     function bootToDraft(boot) {
       if (!boot || !boot.settings) return null;
       return {
-        rolloverPolicy: boot.settings.rolloverPolicy,
-        recurringRollover: boot.settings.recurringRollover,
         reportFooter: boot.settings.reportFooter || '',
         reportFiles: (boot.settings.reportFiles || []).join('\n'),
         reportSignature: boot.settings.reportSignature ?? '',
@@ -2650,7 +2571,7 @@ const CSS = `
      * 外框由 Modal 承担，这里只放内容，不再套一层卡片。
      */
     function SettingsModal(props) {
-      const { api, boot, skin, onSkin, onClose, styleOk } = props;
+      const { api, boot, skin, onSkin, onClose } = props;
       const [draft, setDraft] = React.useState(() => bootToDraft(boot));
       const [override, setOverride] = React.useState({ date: '', kind: 'holiday' });
 
@@ -2665,8 +2586,6 @@ const CSS = `
         api
           .send('settings_update', {
             settings: {
-              rolloverPolicy: draft.rolloverPolicy,
-              recurringRollover: draft.recurringRollover,
               reportFooter: draft.reportFooter,
               reportFiles: draft.reportFiles
                 .split('\n')
@@ -2694,38 +2613,11 @@ const CSS = `
           { title: '外观' },
           h(
             SetRow,
-            { label: '皮肤', hint: '切换整套配色，立即生效' },
+            { label: '皮肤' },
             h(
               'select',
               { className: 'aw-select', 'aria-label': '皮肤', value: skin, onChange: (event) => onSkin(event.target.value) },
               SKINS.map((item) => h('option', { key: item.id, value: item.id }, item.label)),
-            ),
-          ),
-        ),
-
-        /* ── 待办顺延 ── */
-        h(
-          SetGroup,
-          { title: '待办顺延' },
-          h(
-            SetRow,
-            { label: '未完成待办默认顺延策略' },
-            h(
-              'select',
-              { className: 'aw-select', value: draft.rolloverPolicy, onChange: (event) => setDraft({ ...draft, rolloverPolicy: event.target.value }) },
-              h('option', { value: 'always' }, '一律顺延到明天'),
-              h('option', { value: 'backlog' }, '顺延但转入积压'),
-              h('option', { value: 'never' }, '到期作废'),
-            ),
-          ),
-          h(
-            SetRow,
-            { label: '重复任务实例的策略' },
-            h(
-              'select',
-              { className: 'aw-select', value: draft.recurringRollover, onChange: (event) => setDraft({ ...draft, recurringRollover: event.target.value }) },
-              h('option', { value: 'always' }, '一律顺延（当前选择）'),
-              h('option', { value: 'never' }, '当天没做就算漏做'),
             ),
           ),
         ),
@@ -2736,12 +2628,12 @@ const CSS = `
           { title: '报表' },
           h(
             SetRow,
-            { label: '报表落款 / 附加说明', hint: '渲染到报表末尾' },
+            { label: '报表落款 / 附加说明' },
             h('input', { className: 'aw-input', value: draft.reportFooter, onChange: (event) => setDraft({ ...draft, reportFooter: event.target.value }) }),
           ),
           h(
             SetRow,
-            { label: '追加时的署名', hint: '写在日期后面，留空则不写' },
+            { label: '追加时的署名' },
             h('input', {
               className: 'aw-input',
               placeholder: '团队',
@@ -2775,7 +2667,6 @@ const CSS = `
               value: draft.reportFiles,
               onChange: (event) => setDraft({ ...draft, reportFiles: event.target.value }),
             }),
-            h('div', { className: 'aw-set-note' }, '点报表里的「添加进周报文件」会把正文插到这些文件的最前面一条之前。'),
           ),
         ),
 
@@ -2799,7 +2690,7 @@ const CSS = `
           holiday && holiday.error ? h(SetRow, { wide: true }, h('div', { className: 'aw-set-note', style: { color: 'var(--danger)' } }, `数据加载异常：${holiday.error}`)) : null,
           h(
             SetRow,
-            { label: '添加覆盖', hint: '公司额外放假 / 特殊作息' },
+            { label: '添加覆盖' },
             h('input', { className: 'aw-input', type: 'date', value: override.date, onChange: (event) => setOverride({ ...override, date: event.target.value }) }),
             h(
               'select',
@@ -2813,11 +2704,6 @@ const CSS = `
               '添加',
             ),
           ),
-          h(
-            SetRow,
-            { wide: true },
-            h('div', { className: 'aw-set-note' }, '新年份的节假日安排发布后，替换插件目录下的 data/china-holidays.json 即可；未覆盖的年份会明确告警，不会静默估算。'),
-          ),
         ),
 
         /* ── 危险操作：删除类单独一组 ── */
@@ -2826,7 +2712,7 @@ const CSS = `
           { title: '危险操作', tone: 'danger' },
           h(
             SetRow,
-            { label: '已覆盖的日期', hint: Object.keys(overrides).length > 0 ? '点 × 逐条删除' : '还没有手工覆盖', stacked: true },
+            { label: '已覆盖的日期', stacked: true },
             Object.keys(overrides).length > 0
               ? h(
                   'div',
@@ -2855,16 +2741,15 @@ const CSS = `
           ),
           h(
             SetRow,
-            { label: '清除全部覆盖', hint: '删除所有手工设置的节假日 / 调休' },
+            { label: '清除全部覆盖' },
             h(Btn, { tone: 'danger', disabled: Object.keys(overrides).length === 0, onClick: clearAll }, '清除全部'),
           ),
         ),
 
-        /* 底部：版本 + 关闭 / 保存 */
+        /* 底部：关闭 / 保存 */
         h(
           'div',
           { className: 'aw-set-foot' },
-          h('div', { className: 'aw-set-meta' }, `界面版本 ${BUILD} · 样式${styleOk === null ? '未知' : styleOk ? '已生效' : '未生效'} · 如果样式不对，先完全退出 DSH 再打开`),
           h(Btn, { tone: 'ghost', onClick: onClose }, '关闭'),
           h(Btn, { tone: 'primary', onClick: save }, '保存设置'),
         ),
@@ -2933,6 +2818,7 @@ const CSS = `
       // initialSettings 同样只有本地渲染台会传：?settings=1 直接打开设置弹层，
       // 好让设置页也有一个可截图的 URL。
       const [settingsOpen, setSettingsOpen] = React.useState(!!props.initialSettings);
+      const [projectCreateOpen, setProjectCreateOpen] = React.useState(false);
       // 皮肤放在最后：不改动前面 hooks 的下标，测试里靠下标预设状态的那些用例不受影响。
       const [skin, setSkin] = React.useState(() => readSkin(props.initialSkin));
       React.useEffect(() => {
@@ -2943,7 +2829,6 @@ const CSS = `
         }
       }, [skin]);
       const pageRef = React.useRef(null);
-      const [styleOk, setStyleOk] = React.useState(null);
 
       // 首次挂载：拉启动快照（分页内容由下面的 tab effect 负责）。
       React.useEffect(() => {
@@ -2953,6 +2838,7 @@ const CSS = `
 
       // 分页切换时按需拉取。
       React.useEffect(() => {
+        setProjectCreateOpen(false);
         if (tab === 'today') api.open('today');
         else if (tab === 'projects') api.open('projects');
         else if (tab === 'reports') api.open('reports', { status: 'all' });
@@ -2976,15 +2862,7 @@ const CSS = `
 
       // 放在所有 hook 之后：不改动前面 use* 的下标
       React.useEffect(() => {
-        const root = pageRef.current;
-        ensureStyle(root);
-        // 自检：面板底色到底有没有被样式表接管（没接管就是透明的）
-        try {
-          const bg = root ? getComputedStyle(root).backgroundColor : '';
-          setStyleOk(Boolean(bg) && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent');
-        } catch (error) {
-          setStyleOk(null);
-        }
+        ensureStyle(pageRef.current);
       }, [skin]);
 
       const boot = snap.boot;
@@ -3044,22 +2922,27 @@ const CSS = `
             boot
               ? h(
                   'div',
-                  { className: 'aw-promo', title: '今日待办 / 其中顺延' },
+                  { className: 'aw-promo', title: '今日完成进度' },
                   h('div', { className: 'aw-promo-label' }, '今日待办'),
-                  h('div', { className: 'aw-promo-value' }, `${boot.counts.openTodos ?? 0} 项`),
+                  h('div', { className: 'aw-promo-value' }, `${boot.counts.todayPlanned ?? 0} 项`),
                   h(
                     'div',
                     { className: 'aw-promo-bar' },
                     h('i', {
                       style: {
-                        width: `${Math.min(100, ((Number(boot.counts.carried) || 0) / Math.max(1, Number(boot.counts.openTodos) || 1)) * 100)}%`,
+                        width: `${Math.min(
+                          100,
+                          ((Number(boot.counts.todayDone) || 0) /
+                            Math.max(1, (Number(boot.counts.todayDone) || 0) + (Number(boot.counts.todayPlanned) || 0))) *
+                            100,
+                        )}%`,
                       },
                     }),
                   ),
                   h(
                     'div',
                     { className: 'aw-promo-note' },
-                    h('span', null, `顺延 ${boot.counts.carried ?? 0}`),
+                    h('span', null, `完成 ${boot.counts.todayDone ?? 0}`),
                     boot.counts.draftReports > 0 ? h('span', null, `草稿 ${boot.counts.draftReports}`) : null,
                   ),
                 )
@@ -3090,6 +2973,9 @@ const CSS = `
                 h(
                   'div',
                   { className: 'aw-split-row' },
+                  tab === 'projects'
+                    ? h('button', { type: 'button', className: 'aw-btn is-primary is-small', onClick: () => setProjectCreateOpen(true) }, '新增项目')
+                    : null,
                   h('button', { type: 'button', className: 'aw-btn is-ghost is-small', onClick: () => setSettingsOpen(true), title: '设置' }, '设置'),
                 ),
               ),
@@ -3103,7 +2989,7 @@ const CSS = `
           tab === 'today'
             ? h(TodayTab, { api, view, busy: snap.busy, boot })
               : tab === 'projects'
-                ? h(ProjectsTab, { api, view, busy: snap.busy })
+                ? h(ProjectsTab, { api, view, busy: snap.busy, createOpen: projectCreateOpen, onCloseCreate: () => setProjectCreateOpen(false) })
                 : tab === 'reports'
                   ? h(ReportsTab, { api, view, busy: snap.busy, boot })
                   : h(StatsTab, { api, view, busy: snap.busy }),
@@ -3128,7 +3014,6 @@ const CSS = `
             boot,
             skin,
             onSkin: setSkin,
-            styleOk,
             onClose: () => setSettingsOpen(false),
           }),
         }),

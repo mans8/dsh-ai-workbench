@@ -338,7 +338,7 @@ async function bootHost(label, startClock = '2026-10-12') {
 
 /** 造一份有代表性的工作台账，然后把各视图抓下来。 */
 async function collectViews() {
-  // 先在 2026-10-09 建账，再拨到 10-12 —— 这样顺延、逾期、积压都是真实算出来的。
+  // 先在 2026-10-09 建账，再拨到 10-12 —— 这样自动带入、逾期、积压都是真实算出来的。
   const host = await bootHost('client-fixture', '2026-10-09');
   const order = (await host.post({ action: 'project_create', name: '订单中台', code: 'OMS', emoji: '📦', owner: '我' })).result.data.id;
   const recon = (await host.post({ action: 'project_create', name: '对账系统', code: 'REC', emoji: '🧾' })).result.data.id;
@@ -347,7 +347,7 @@ async function collectViews() {
   await host.post({ action: 'todo_create', title: '支付回调幂等性改造', project: '订单中台', plannedDate: '2026-10-06', priority: 'P0' });
   await host.post({ action: 'todo_create', title: '对账系统灰度方案设计', project: '对账系统', plannedDate: '2026-10-07', dueDate: '2026-10-09' });
   await host.post({ action: 'todo_create', title: '整理接口文档', plannedDate: '2026-10-12', progress: 40 });
-  await host.post({ action: 'todo_create', title: '背单词', plannedDate: '2026-10-11', rollover: 'backlog' });
+  await host.post({ action: 'todo_create', title: '背单词', plannedDate: '2026-10-11' });
   await host.post({ action: 'todo_create', title: '与产品对齐导出字段', plannedDate: '2026-10-12' });
 
   await host.post({ action: 'todo_complete', task: '订单导出接口重构', date: '2026-10-05', note: 'QPS 从 120 提到 900' });
@@ -358,6 +358,7 @@ async function collectViews() {
 
   // ── 拨到今天 ──
   host.setClock('2026-10-12');
+  await host.post({ action: 'todo_reschedule', task: '背单词', toBacklog: true });
 
   await host.post({ action: 'todo_create', title: '每日站会', repeat: { freq: 'workdays' }, priority: 'P2' });
   await host.post({ action: 'todo_create', title: '周一复盘', repeat: { freq: 'weekly', weekdays: [1] } });
@@ -592,10 +593,10 @@ function renderPage(tab, extraPresets = {}, viewOverride) {
 group('2. 四个分页都能无异常渲染');
 {
   const expectations = {
-    today: ['AI 工作台账', '今日待办', '整理接口文档', '每日站会', '新增', '本周完成', '顺延'],
-    projects: ['订单中台', '对账系统', '新建项目', '完成'],
+    today: ['AI 工作台账', '今日待办', '整理接口文档', '每日站会', '新增', '本周完成', '完成'],
+    projects: ['订单中台', '对账系统', '新增项目', '完成'],
     reports: ['生成报表', '周报', '报表库', '已归档'],
-    stats: ['汇总', '完成率', '按时完成率', '完成数分布'],
+    stats: ['汇总', '完成率', '完成数分布'],
   };
 
   for (const [tab, needles] of Object.entries(expectations)) {
@@ -724,15 +725,15 @@ group('2c. 数据仓库：乱序响应不能覆盖新数据');
 
 group('3. 真实数据是否正确落到界面上');
 {
-  check('今日页显示顺延 / 逾期 / 积压提示', () => {
+  check('今日页显示逾期 / 积压提示', () => {
     const { text } = renderPage('today');
-    assert.ok(text.includes('顺延'), '缺少顺延提示');
     assert.ok(text.includes('逾期'), '缺少逾期提示');
+    assert.ok(text.includes('积压'), '缺少积压提示');
   });
 
   check('报表页列出三份报表并标注状态', () => {
     const { text } = renderPage('reports');
-    assert.ok(text.includes('W40'), `缺少周报标题：${JSON.stringify(text.slice(0, 300))}`);
+    assert.ok(text.includes('W41'), `缺少周报标题：${JSON.stringify(text.slice(0, 300))}`);
     assert.ok(text.includes('已归档'), '缺少已归档状态');
     assert.ok(text.includes('草稿'), '缺少草稿状态');
   });
@@ -950,22 +951,16 @@ group('3h. 报表页的兜底：缺字段也要渲染出来');
     assert.match(text, /草稿\s*\d+/, '草稿计数应当从列表里自己数出来');
   });
 
-  check('设置弹层底部显示界面版本，便于确认加载了哪一版', () => {
-    const api = fakeApi('reports', views.reports);
-    react.presets({ WorkPage: { 2: 'reports', 3: true } });
-    const text = textOf(react.render(react.createElement(slots.main.component, { api })).tree);
-    assert.match(text, /界面版本 v\d/, '设置里应当能看到版本号');
-  });
 }
 
-group('3f2. 周报日期可自定义，默认「上周五 ~ 本周四」');
+group('3f2. 周报日期可自定义，默认「本周一 ~ 本周五」');
 {
   /** 找到「生成报表」那张卡片。 */
   function generateCard(tree) {
     return findNode(tree, (n) => n.type === 'div' && /aw-card/.test(n.props?.className || '') && textOf(n).includes('生成草稿'));
   }
 
-  check('默认给「上周五 ~ 本周四」两个日期框，不是单个锚点日期', () => {
+  check('默认给「本周一 ~ 本周五」两个日期框，不是单个锚点日期', () => {
     const { tree } = renderPage('reports');
     const card = generateCard(tree);
     assert.ok(card, '找不到生成报表卡片');
@@ -978,15 +973,13 @@ group('3f2. 周报日期可自定义，默认「上周五 ~ 本周四」');
     assert.equal(dates.length, 2, `周报应当有两个日期框，实际 ${dates.length} 个`);
     const from = new Date(`${dates[0].props.value}T00:00:00`);
     const to = new Date(`${dates[1].props.value}T00:00:00`);
-    assert.equal(from.getDay(), 5, `起点应当是周五，实际 ${dates[0].props.value}（周${'日一二三四五六'[from.getDay()]}）`);
-    assert.equal(to.getDay(), 4, `终点应当是周四，实际 ${dates[1].props.value}（周${'日一二三四五六'[to.getDay()]}）`);
-    assert.equal((to - from) / 86400000, 6, '应当是连续 7 天');
-    assert.ok(textOf(card).includes('上周五'), '应当说明默认是「上周五 ~ 本周四」');
-    assert.ok(textOf(card).includes('本周四'), '应当说明默认是「上周五 ~ 本周四」');
-    // 终点是「最近一个周四」，只能是当天或之前（周四当天正好等于今天）
-    const todayKey = new Date().toLocaleDateString('sv');
-    assert.ok(dates[1].props.value <= todayKey, `默认区间不该跑到今天之后：${dates[1].props.value} > ${todayKey}`);
-    assert.equal(new Date(`${dates[1].props.value}T00:00:00`).getDay(), 4, '终点必须是周四');
+    assert.equal(from.getDay(), 1, `起点应当是周一，实际 ${dates[0].props.value}（周${'日一二三四五六'[from.getDay()]}）`);
+    assert.equal(to.getDay(), 5, `终点应当是周五，实际 ${dates[1].props.value}（周${'日一二三四五六'[to.getDay()]}）`);
+    assert.equal((to - from) / 86400000, 4, '应当是连续 5 天');
+    assert.ok(findNode(card, (n) => n.type === 'input' && n.props?.title === '周报区间起点'), '起点日期框缺少说明');
+    assert.ok(findNode(card, (n) => n.type === 'input' && n.props?.title === '周报区间终点'), '终点日期框缺少说明');
+    // 周中的默认区间会包含今天之后的日子，这是预期行为
+    assert.equal(new Date(`${dates[1].props.value}T00:00:00`).getDay(), 5, '终点必须是周五');
   });
 
   check('改日期后生成：请求里带上 from / to', () => {
@@ -1057,7 +1050,7 @@ group('4. 交互组件：设置弹层 / 日期编辑器 / 报表编辑器');
     const updates = api.calls.filter((c) => c[0] === 'send' && c[1] === 'settings_update');
     assert.equal(updates.length, 1, `应当只发一次 settings_update：${JSON.stringify(api.calls)}`);
     assert.deepEqual(Object.keys(updates[0][2].settings).sort(), [
-      'recurringRollover', 'reportFiles', 'reportFooter', 'reportSignature', 'reportTemplate', 'rolloverPolicy',
+      'reportFiles', 'reportFooter', 'reportSignature', 'reportTemplate',
     ]);
   });
 
@@ -1065,7 +1058,7 @@ group('4. 交互组件：设置弹层 / 日期编辑器 / 报表编辑器');
     const { text, effectErrors } = renderPage('reports', { WorkPage: { 2: 'reports', 3: true } });
     assert.equal(effectErrors.length, 0, effectErrors.map((e) => e.message).join('; '));
     assert.ok(text.includes('设置'), '缺少设置标题');
-    for (const section of ['外观', '待办顺延', '报表', '节假日与调休', '危险操作']) {
+    for (const section of ['外观', '报表', '节假日与调休', '危险操作']) {
       assert.ok(text.includes(section), `缺少设置分组「${section}」`);
     }
     assert.ok(text.includes('内置日历'), '缺少内置日历信息');
@@ -1184,32 +1177,28 @@ group('3b2. 顶部与今日页的冗余 chip 已去掉');
     return out;
   }
 
-  check('顶部状态栏不再有「日需」「顺延中」，侧栏 promo 改成今日待办', () => {
+  check('顶部状态栏没有「日需」，侧栏 promo 回答「今天做什么」', () => {
     const { tree } = renderPage('today');
     const chips = chipTexts(tree);
     assert.ok(!chips.some((c) => c.startsWith('日需')), `不该再有日需 chip：${JSON.stringify(chips)}`);
-    assert.ok(!chips.some((c) => c.startsWith('顺延中')), `不该再有顺延中 chip：${JSON.stringify(chips)}`);
-    // 侧栏 promo 卡现在回答「今天做什么」：今日待办 openTodos / 顺延 carried
+    // 侧栏 promo 卡展示今日待办与完成进度
     const text = textOf(tree);
     assert.match(text, /今日待办\s+\d+\s*项/, '今日待办的数量应当保留');
-    assert.match(text, /顺延\s+\d+/, '顺延的数量应当保留');
+    assert.match(text, /完成\s+\d+/, '今日完成的数量应当保留');
   });
 
-  check('今日页不再有「法定工作日」chip 和「顺延 N」chip', () => {
+  check('今日页没有「法定工作日」chip，底部概览数字仍在', () => {
     const { tree } = renderPage('today');
     const chips = chipTexts(tree);
     assert.ok(!chips.includes('💼 法定工作日'), `不该再有法定工作日 chip：${JSON.stringify(chips)}`);
-    assert.ok(!chips.some((c) => /^顺延 \d+$/.test(c)), `不该再有顺延 chip：${JSON.stringify(chips)}`);
     // 重构后底部概览是一行说明文字，不再用胶囊 —— 这两个数必须还在
     const text = textOf(tree);
     assert.match(text, /今日待办\s+\d+/, '今日待办的数量应当保留');
     assert.match(text, /本周完成\s+\d+/, '本周完成的数量应当保留');
   });
 
-  check('「N 项从以前顺延到今天」这条提醒不再出现（逾期提醒保留）', () => {
+  check('逾期提醒保留', () => {
     const { text } = renderPage('today');
-    assert.doesNotMatch(text, /项从以前顺延到今天/, '顺延提醒应当去掉');
-    // 重构后逾期只出现一次（顶部那行说明里的「逾期 N」），不再另起一条同义横幅
     assert.match(text, /逾期\s+\d+/, '逾期属于风险，仍然要在页面上出现');
   });
 
@@ -1278,8 +1267,8 @@ group('3c2. 新增待办弹层：× 关闭 + 纵向全宽表单');
     const form = findNode(tree, (n) => n.type === 'div' && n.props?.className === 'aw-form-vertical');
     assert.ok(form, '缺少纵向表单容器');
     const fields = (form.children || []).filter((n) => n.type === 'div' && /aw-field/.test(n.props?.className || ''));
-    assert.ok(fields.length >= 6, `应有至少 6 个字段，实际 ${fields.length}`);
-    for (const label of ['待办标题', '所属项目', '优先级', '计划日期', '重复任务', '顺延策略']) {
+    assert.ok(fields.length >= 5, `应有至少 5 个字段，实际 ${fields.length}`);
+    for (const label of ['待办标题', '所属项目', '优先级', '计划日期', '重复任务']) {
       assert.ok(textOf(form).includes(label), `缺少字段名称「${label}」`);
     }
   });
@@ -1534,7 +1523,7 @@ group('3c4. 待办可以修改（未完成 / 已完成都支持）');
     const text = textOf(tree);
     assert.ok(text.includes('修改待办'), '没出现修改弹层');
     // 字段齐全
-    for (const label of ['标题', '备注', '项目', '优先级', '顺延策略', '计划日', '截止日', '完成度']) {
+    for (const label of ['标题', '备注', '项目', '优先级', '计划日', '截止日', '完成度']) {
       assert.ok(text.includes(label), `弹层缺少「${label}」`);
     }
     assert.equal(api.calls.filter((c) => c[0] === 'send').length, 0, '只是打开弹层不该发请求');
@@ -1605,7 +1594,7 @@ group('3c6. 项目页：能新建也能改');
     assert.equal(edits, projects.length, `项目 ${projects.length} 个，编辑按钮 ${edits} 个`);
   });
 
-  check('点「编辑」打开弹层，只剩 项目名 / 状态 / 说明', () => {
+  check('点「编辑」打开弹层，字段为 项目名 / 分类 / 状态 / 说明', () => {
     const api = fakeApi('projects', views.projects);
     react.presets({ WorkPage: { 2: 'projects' } });
     const element = react.createElement(slots.main.component, { api });
@@ -1625,7 +1614,7 @@ group('3c6. 项目页：能新建也能改');
       if (node.type === 'label') labels.push(textOf(node).trim());
       for (const child of node.children || []) walk(child);
     })(modal);
-    assert.deepEqual(labels, ['项目名', '状态', '说明'], `弹层字段不对：${JSON.stringify(labels)}`);
+    assert.deepEqual(labels, ['项目名', '分类', '状态', '说明'], `弹层字段不对：${JSON.stringify(labels)}`);
     const nameInput = findNode(modal, (n) => n.type === 'input' && n.props?.value === views.projects[0].name);
     assert.ok(nameInput, '项目名没有预填当前值');
   });
@@ -1656,15 +1645,15 @@ group('3c6. 项目页：能新建也能改');
     const { tree } = renderPage('projects');
     const css = cssOf(tree);
     assert.match(css, /^\.aw-grid\{[^}]*minmax\(3[0-9]{2}px/m, '项目栅格应当放宽到 300px 以上');
-    // 「新建项目」表单只剩一个项目名输入框
+    // 项目卡片上能看到分类
     const text = textOf(tree);
-    assert.ok(text.includes('项目名'), '新建表单缺少「项目名」字段名');
+    assert.ok(text.includes('工作'), '项目卡片应当显示分类');
   });
 }
 
-group('3c7. 项目表单只留必要字段');
+group('3c7. 项目表单：新增按钮打开弹窗，字段为项目名 / 分类 / 状态 / 说明');
 {
-  /** 取某张卡片的字段名。 */
+  /** 取弹层里的字段名。 */
   function labelsOf(node) {
     const out = [];
     (function walk(item) {
@@ -1675,32 +1664,48 @@ group('3c7. 项目表单只留必要字段');
     return out;
   }
 
-  check('新建表单只有「项目名」', () => {
-    const { tree } = renderPage('projects');
-    const card = findNode(tree, (n) => n.type === 'div' && /aw-card/.test(n.props?.className || '') && textOf(n).includes('新建项目'));
-    assert.ok(card, '找不到「新建项目」卡片');
-    assert.deepEqual(labelsOf(card), ['项目名']);
-    for (const gone of ['图标', '代号', '负责人', '启动日', '结束日']) {
-      assert.ok(!labelsOf(card).includes(gone), `新建表单不该再有「${gone}」`);
-    }
-  });
+  /** 点顶栏「新增项目」打开弹窗。 */
+  function openCreate(api) {
+    react.presets({ WorkPage: { 2: 'projects' } });
+    const element = react.createElement(slots.main.component, { api });
+    const first = react.render(element).tree;
+    const trigger = findNode(first, (n) => n.type === 'button' && textOf(n).trim() === '新增项目');
+    assert.ok(trigger, '顶栏缺少「新增项目」按钮');
+    trigger.props.onClick();
+    const tree = react.render(element).tree;
+    const modal = findNode(tree, (n) => n.type === 'div' && n.props?.className === 'aw-modal');
+    assert.ok(modal, '点了「新增项目」却没打开弹窗');
+    return { element, tree, modal };
+  }
 
-  check('编辑弹层只有 项目名 / 状态 / 说明', () => {
-    const api = fakeApi('projects', views.projects);
+  /** 点卡片上的「编辑」打开弹窗。 */
+  function openEdit(api) {
     react.presets({ WorkPage: { 2: 'projects' } });
     const element = react.createElement(slots.main.component, { api });
     findNode(react.render(element).tree, (n) => n.type === 'button' && textOf(n).trim() === '编辑').props.onClick();
-
-    const opened = react.render(element).tree;
-    const modal = findNode(opened, (n) => n.type === 'div' && n.props?.className === 'aw-modal');
+    const tree = react.render(element).tree;
+    const modal = findNode(tree, (n) => n.type === 'div' && n.props?.className === 'aw-modal');
     assert.ok(modal, '没打开弹层');
-    assert.deepEqual(labelsOf(modal), ['项目名', '状态', '说明']);
+    return { element, modal };
+  }
+
+  check('新增弹窗只有 项目名 / 分类 / 状态 / 说明', () => {
+    const { modal } = openCreate(fakeApi('projects', views.projects));
+    assert.deepEqual(labelsOf(modal), ['项目名', '分类', '状态', '说明']);
+    for (const gone of ['图标', '代号', '负责人', '启动日', '结束日']) {
+      assert.ok(!labelsOf(modal).includes(gone), `新增弹窗不该再有「${gone}」`);
+    }
+  });
+
+  check('编辑弹层字段与新增一致', () => {
+    const { modal } = openEdit(fakeApi('projects', views.projects));
+    assert.deepEqual(labelsOf(modal), ['项目名', '分类', '状态', '说明']);
     for (const gone of ['图标', '代号', '负责人', '启动日', '结束日']) {
       assert.ok(!labelsOf(modal).includes(gone), `编辑弹层不该再有「${gone}」`);
     }
   });
 
-  check('保存时只提交 name / description / status，不带被删掉的字段', () => {
+  check('保存时提交 name / category / description / status', () => {
     const api = fakeApi('projects', views.projects);
     react.presets({ WorkPage: { 2: 'projects' } });
     const element = react.createElement(slots.main.component, { api });
@@ -1717,23 +1722,23 @@ group('3c7. 项目表单只留必要字段');
     assert.equal(updates.length, 1);
     const payload = updates[0][2];
     assert.equal(payload.name, '改过的项目名');
+    assert.equal(payload.category, 'work');
     for (const gone of ['emoji', 'code', 'owner', 'startedAt', 'endedAt']) {
       assert.ok(!(gone in payload), `payload 里不该再带 ${gone}：${JSON.stringify(payload)}`);
     }
   });
 
-  check('新建时只提交 name', () => {
+  check('新建时提交 name / category / description / status', () => {
     const api = fakeApi('projects', views.projects);
-    react.presets({ WorkPage: { 2: 'projects' } });
-    const element = react.createElement(slots.main.component, { api });
-    const first = react.render(element).tree;
-    findNode(first, (n) => n.type === 'input' && n.props?.placeholder === '例如：示例政务客户二期').props.onChange({ target: { value: '新项目' } });
+    const { element, modal } = openCreate(api);
+    findNode(modal, (n) => n.type === 'input').props.onChange({ target: { value: '新项目' } });
     const ready = react.render(element).tree;
-    findNode(ready, (n) => n.type === 'button' && textOf(n).trim() === '新建').props.onClick();
+    const readyModal = findNode(ready, (n) => n.type === 'div' && n.props?.className === 'aw-modal');
+    findNode(readyModal, (n) => n.type === 'button' && textOf(n).trim() === '新建').props.onClick();
 
     const creates = api.calls.filter((c) => c[0] === 'send' && c[1] === 'project_create');
     assert.equal(creates.length, 1);
-    assert.deepEqual(creates[0][2], { name: '新项目' });
+    assert.deepEqual(creates[0][2], { name: '新项目', category: 'work', description: '', status: 'active' });
   });
 }
 
@@ -1899,11 +1904,11 @@ group('4b. 空按钮回归（任何 button 都必须有文案）');
     assert.deepEqual(problems, [], problems.join('；'));
   });
 
-  check('项目页「新建项目」按钮带着「新建」文案', () => {
+  check('项目页顶部有「新增项目」按钮', () => {
     const { tree, text } = renderPage('projects');
-    assert.ok(text.includes('新建'), '缺少「新建」文案');
+    assert.ok(text.includes('新增项目'), '缺少「新增项目」文案');
     const labels = collectButtons(tree);
-    assert.ok(labels.some((label) => label === '新建'), `按钮文案里没有「新建」：${JSON.stringify(labels)}`);
+    assert.ok(labels.some((label) => label === '新增项目'), `按钮文案里没有「新增项目」：${JSON.stringify(labels)}`);
   });
 
 }

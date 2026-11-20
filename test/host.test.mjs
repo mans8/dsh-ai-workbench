@@ -7,7 +7,7 @@ function dayCount(from, to) {
  * AI 工作台账 — Host 半体端到端测试（mock Cordis ctx）。
  *
  * 不依赖真实 DSH：伪造 webServer/connection/tools 三个服务，把 HTTP 路由当成
- * 被测接口驱动，覆盖顺延、重复任务、日历工作日、统计与报表归档这几条核心路径。
+ * 被测接口驱动，覆盖自动带入、重复任务、日历工作日、统计与报表归档这几条核心路径。
  *
  * 时间完全由 `today` 参数驱动（时钟木偶），所以测试与机器真实日期无关：
  *   A.day('2026-10-13')   → 之后的请求都当作「今天是 10-13」
@@ -235,18 +235,18 @@ group('1. 日历与法定工作日（2026）');
 }
 
 /* ------------------------------------------------------------------ *
- * 2. 待办与惰性顺延
+ * 2. 待办与惰性补算
  * ------------------------------------------------------------------ */
 
 const A = await harness('rollover');
 
-group('2. 待办清单与跨日顺延');
+group('2. 待办清单与跨日自动带入');
 {
   const boot = await A.get('bootstrap');
   check('bootstrap 返回今日、设置、游标、计数与日历', () => {
     assert.equal(boot.view.today, '2026-10-12');
-    assert.equal(boot.view.settings.rolloverPolicy, 'always');
-    assert.equal(boot.view.settings.recurringRollover, 'always');
+    assert.equal(boot.view.counts.todayPlanned, 0);
+    assert.equal(boot.view.settings.reportFooter !== undefined, true);
     assert.equal(boot.view.holiday.maxYear, 2026);
     assert.ok(boot.view.cursor);
     assert.ok(boot.view.counts);
@@ -273,32 +273,29 @@ group('2. 待办清单与跨日顺延');
     assert.equal(today1.view.todos.length, 1);
     assert.equal(today1.view.todos[0].title, '订单导出接口重构');
     assert.equal(today1.view.todos[0].projectName, '订单中台');
-    assert.equal(today1.view.todos[0].carried, false);
   });
 
   const day2 = await A.day('2026-10-13').get('today');
-  check('次日未完成 → 顺延 1 天，仍是同一条记录', () => {
+  check('次日未完成 → 自动出现在次日，仍是同一条记录', () => {
     assert.equal(day2.view.todos.length, 1);
     assert.equal(day2.view.todos[0].id, todoId);
     assert.equal(day2.view.todos[0].plannedDate, '2026-10-13');
-    assert.equal(day2.view.todos[0].rolloverCount, 1);
-    assert.equal(day2.view.stats.carriedCount, 1);
     assert.equal(day2.rollover.days, 1);
     assert.equal(day2.rollover.moved, 1);
   });
 
   const day4 = await A.day('2026-10-15').get('today');
-  check('隔两天再打开：一次补算 2 天，顺延累计到 3 天', () => {
+  check('隔两天再打开：一次补算 2 天，计划日推进到当天', () => {
     assert.equal(day4.view.todos[0].plannedDate, '2026-10-15');
-    assert.equal(day4.view.todos[0].rolloverCount, 3);
+    assert.equal(A.readState().todos.find((item) => item.id === todoId).rolloverCount, 3);
     assert.equal(day4.rollover.days, 2);
   });
 
-  check('顺延不产生新记录（todos 里仍然只有 1 条）', () => {
+  check('自动带入不产生新记录（todos 里仍然只有 1 条）', () => {
     assert.equal(A.readState().todos.length, 1);
   });
 
-  check('顺延按天记账，供统计与报表使用', () => {
+  check('补算按天记账（内部指标保留）', () => {
     const state = A.readState();
     assert.equal(state.rolloverLog['2026-10-12'], 1);
     assert.equal(state.rolloverLog['2026-10-13'], 1);
@@ -360,7 +357,7 @@ group('2. 待办清单与跨日顺延');
  * 3. 重复任务
  * ------------------------------------------------------------------ */
 
-group('3. 重复任务（一律顺延 + 一次只留一个未完成实例）');
+group('3. 重复任务（自动带入 + 一次只留一个未完成实例）');
 {
   await A.ok({ action: 'todo_create', title: '每日站会', repeat: { freq: 'workdays' } });
 
@@ -372,7 +369,7 @@ group('3. 重复任务（一律顺延 + 一次只留一个未完成实例）');
   });
 
   await A.day('2026-10-19').get('today');
-  check('未完成的重复任务实例顺延 4 天，且不会堆积成多条', () => {
+  check('未完成的重复任务实例带入 4 天，且不会堆积成多条', () => {
     const instances = A.readState().todos.filter((item) => item.title === '每日站会' && !item.isTemplate);
     assert.equal(instances.length, 1, `实际 ${instances.length} 条`);
     assert.equal(instances[0].plannedDate, '2026-10-19');
@@ -392,10 +389,10 @@ group('3. 重复任务（一律顺延 + 一次只留一个未完成实例）');
     const open = day4.view.todos.filter((item) => item.title === '每日站会');
     assert.equal(open.length, 1);
     assert.equal(open[0].plannedDate, '2026-10-20');
-    assert.equal(open[0].rolloverCount, 0);
+    assert.equal(A.readState().todos.find((item) => item.id === open[0].id).rolloverCount, 0);
   });
 
-  check('模板本身不参与顺延、不出现在今日列表', () => {
+  check('模板本身不参与补算、不出现在今日列表', () => {
     const templates = A.readState().todos.filter((item) => item.isTemplate);
     assert.equal(templates.length, 1);
     assert.equal(templates[0].plannedDate, null);
@@ -431,29 +428,33 @@ group('5. 周报 / 月报 / 年报 与历史归档');
   await C.ok({ action: 'todo_complete', task: '支付回调幂等性改造', date: '2026-10-06' });
   await C.ok({ action: 'log_note', title: '与产品对齐导出字段', date: '2026-10-07', project: '订单中台' });
 
-  // 锚点为 10-09（周五）：周报写的是「上周五 ~ 本周四」= 10-02 ~ 10-08
+  // 锚点为 10-09（周五）：周报默认写本周一 ~ 本周五 = 10-05 ~ 10-09
   const weekly = await C.ok({ action: 'report_create', type: 'weekly', date: '2026-10-09' });
   const reportId = weekly.data.id;
   const report = weekly.data.report;
 
-  check('周报默认是「上周五 ~ 本周四」：锚点 10-09 对应 10-02 ~ 10-08', () => {
-    assert.equal(report.from, '2026-10-02', '起点应当是上周五');
-    assert.equal(report.to, '2026-10-08', '终点应当是本周四');
-    assert.equal(dayCount(report.from, report.to), 7, '默认一周 7 天');
-    assert.match(report.title, /W40/);
+  check('周报默认是本周一 ~ 本周五：锚点 10-09 对应 10-05 ~ 10-09', () => {
+    assert.equal(report.from, '2026-10-05', '起点应当是本周一');
+    assert.equal(report.to, '2026-10-09', '终点应当是本周五');
+    assert.equal(dayCount(report.from, report.to), 5, '默认一周 5 天');
+    assert.match(report.title, /W41/);
   });
 
-  await checkAsync('周五写周报，落到刚过完的那一周（上周五 ~ 本周四）', async () => {
-    // 今天是 10-23（周五）→ 应当是 10-16 ~ 10-22，而不是未来的 10-23 ~ 10-29
+  await checkAsync('周报永远落在锚点所在的那一周（周一 ~ 周五）', async () => {
+    // 10-23（周五）→ 10-19 ~ 10-23
     const friday = await C.ok({ action: 'report_create', type: 'weekly', date: '2026-10-23' });
-    assert.equal(friday.data.report.from, '2026-10-16');
-    assert.equal(friday.data.report.to, '2026-10-22');
-    // 同一天之后的周一到周日，都还指向这一周（写晚几天也不跑偏）
-    for (const day of ['2026-10-22', '2026-10-26', '2026-10-25']) {
+    assert.equal(friday.data.report.from, '2026-10-19');
+    assert.equal(friday.data.report.to, '2026-10-23');
+    // 10-22（周四）与 10-25（周日）都属于 10-19 那一周
+    for (const day of ['2026-10-22', '2026-10-25']) {
       const same = await C.ok({ action: 'report_create', type: 'weekly', date: day });
-      assert.equal(same.data.report.from, '2026-10-16', `${day} 应当还是 10-16 起`);
-      assert.equal(same.data.report.to, '2026-10-22', `${day} 应当还是 10-22 止`);
+      assert.equal(same.data.report.from, '2026-10-19', `${day} 应当还是 10-19 起`);
+      assert.equal(same.data.report.to, '2026-10-23', `${day} 应当还是 10-23 止`);
     }
+    // 10-26（周一）进入下一周
+    const monday = await C.ok({ action: 'report_create', type: 'weekly', date: '2026-10-26' });
+    assert.equal(monday.data.report.from, '2026-10-26');
+    assert.equal(monday.data.report.to, '2026-10-30');
   });
 
   await checkAsync('周报可以自定义区间（from / to 优先于 date）', async () => {
@@ -484,8 +485,8 @@ group('5. 周报 / 月报 / 年报 与历史归档');
   });
 
   check('facts 冻结区间、维度与完成数（不再有工时口径字段）', () => {
-    assert.equal(report.facts.meta.from, '2026-10-02');
-    assert.equal(report.facts.meta.to, '2026-10-08');
+    assert.equal(report.facts.meta.from, '2026-10-05');
+    assert.equal(report.facts.meta.to, '2026-10-09');
     assert.equal(report.facts.meta.dimension, 'time');
     assert.equal(report.facts.totals.done, 3);
     assert.equal('legs' in report.facts, false);
@@ -502,7 +503,7 @@ group('5. 周报 / 月报 / 年报 与历史归档');
     assert.ok(report.facts.completed.every((item) => !('hours' in item)));
   });
 
-  check('未完成的待办在 facts 里仍按「未完成 / 顺延」口径统计（周报正文走精简口径）', () => {
+  check('未完成的待办在 facts 里按「未完成」口径统计（周报正文走精简口径）', () => {
     assert.equal(report.facts.carriedOver.length, 1);
     assert.equal(report.facts.carriedOver[0].title, '对账系统灰度方案设计');
     assert.equal(report.facts.nextWeek.length, 1);
@@ -511,8 +512,8 @@ group('5. 周报 / 月报 / 年报 与历史归档');
 
   check('周报带出下期计划', () => {
     assert.ok(report.facts.next);
-    assert.equal(report.facts.next.from, '2026-10-09');
-    assert.equal(report.facts.next.to, '2026-10-15', '下一期还是周五 ~ 周四');
+    assert.equal(report.facts.next.from, '2026-10-12');
+    assert.equal(report.facts.next.to, '2026-10-16', '下一期是下周一 ~ 下周五');
     assert.ok(report.facts.next.planned.some((item) => item.title === '对账系统灰度方案设计'));
     assert.ok(report.facts.next.planned.every((item) => !('estimateHours' in item)));
   });
@@ -696,6 +697,13 @@ group('7. Agent 工具（workbench_todo / workbench_report）');
     assert.match(addOut, /已新建待办/);
   });
 
+  await D.tool('workbench_todo', { action: 'project_add', title: '个人成长', category: 'personal', date: '2026-10-12' });
+  const projectsOut = await D.tool('workbench_todo', { action: 'project_list', date: '2026-10-12' });
+  check('project_add 支持分类，project_list 带出分类', () => {
+    assert.match(projectsOut, /个人成长/);
+    assert.match(projectsOut, /个人/);
+  });
+
   const todayOut = await D.tool('workbench_todo', { action: 'today', date: '2026-10-12' });
   check('workbench_todo today 输出今日战报', () => {
     assert.match(todayOut, /📅 2026-10-12/);
@@ -713,7 +721,7 @@ group('7. Agent 工具（workbench_todo / workbench_report）');
     assert.match(listOut, /写单元测试/);
   });
 
-  // 锚点 10-16（周五）→ 区间 10-09 ~ 10-15，正好兜住 10-12 那些活
+  // 锚点 10-16（周五）→ 区间 10-12 ~ 10-16，正好兜住 10-12 那些活
   const draftOut = await D.tool('workbench_report', { action: 'draft', type: 'weekly', date: '2026-10-16' });
   check('workbench_report draft 同时给出结构化 facts 与草稿', () => {
     assert.match(draftOut, /结构化事实/);
@@ -800,12 +808,11 @@ group('8. 设置、节假日覆盖与协议边界');
   });
 
   await checkAsync('settings_update 改设置后 bootstrap 反映新值', async () => {
-    const updated = await E.ok({ action: 'settings_update', settings: { reportFooter: '测试页脚', rolloverPolicy: 'backlog' } });
+    const updated = await E.ok({ action: 'settings_update', settings: { reportFooter: '测试页脚' } });
     assert.equal(updated.data.settings.reportFooter, '测试页脚');
     const boot2 = await E.get('bootstrap');
     assert.equal(boot2.view.settings.reportFooter, '测试页脚');
-    assert.equal(boot2.view.settings.rolloverPolicy, 'backlog');
-    await E.ok({ action: 'settings_update', settings: { reportFooter: '', rolloverPolicy: 'always' } });
+    await E.ok({ action: 'settings_update', settings: { reportFooter: '' } });
   });
 
   await E.ok({ action: 'holiday_override_set', date: '2026-10-13', kind: 'holiday' });
@@ -823,7 +830,7 @@ group('8. 设置、节假日覆盖与协议边界');
   });
 
   await E.day('2026-10-01');
-  await checkAsync('系统时钟回拨时不撤销已发生的顺延，也不回退游标', async () => {
+  await checkAsync('系统时钟回拨时不撤销已发生的带入，也不回退游标', async () => {
     const view = await E.get('today');
     assert.equal(view.view.date, '2026-10-01');
     assert.ok(E.readState().cursor.rolledThrough >= '2026-10-12');
@@ -862,47 +869,38 @@ group('8. 设置、节假日覆盖与协议边界');
 }
 
 /* ------------------------------------------------------------------ *
- * 9. 顺延策略 backlog / never
+ * 9. 旧策略字段被忽略
  * ------------------------------------------------------------------ */
 
 const F = await harness('policies');
 
-group('9. 顺延策略 backlog / never');
+group('9. 旧策略字段被忽略，一律自动带入');
 {
+  // 旧数据里可能还带着 rollover: 'backlog' / 'never'，现在一律不参与决策。
   await F.ok({ action: 'todo_create', title: '每天背单词', plannedDate: '2026-10-12', rollover: 'backlog' });
   await F.ok({ action: 'todo_create', title: '今天必须交的日报', plannedDate: '2026-10-12', rollover: 'never' });
 
   await F.day('2026-10-14');
-  const later = await F.get('today');
-  check('backlog 策略：顺延进积压区，不占今日列表', () => {
-    assert.equal(later.view.todos.length, 0);
-    assert.equal(later.view.backlog.length, 1);
-    assert.equal(later.view.backlog[0].title, '每天背单词');
-    assert.equal(later.view.backlog[0].plannedDate, '2026-10-14');
+  await checkAsync('两条都自动带到今天，不进积压、不计漏做', async () => {
+    const later = await F.get('today');
+    assert.equal(later.view.todos.length, 2);
+    assert.equal(later.view.backlog.length, 0);
+    assert.ok(later.view.todos.every((item) => item.plannedDate === '2026-10-14'));
   });
 
-  const never = F.readState().todos.find((item) => item.title === '今天必须交的日报');
-  check('never 策略：到期即作废并记下漏做日期', () => {
-    assert.equal(never.status, 'dropped');
-    assert.equal(never.dropReason, 'missed');
-    assert.equal(never.missedDate, '2026-10-12');
+  check('两条都还是未完成，没有历史漏做记录', () => {
+    const state = F.readState();
+    assert.equal(state.todos.length, 2);
+    assert.ok(state.todos.every((item) => item.status === 'open'));
+    assert.ok(state.todos.every((item) => item.missedDate === null));
   });
 
-  await checkAsync('漏做被记入统计（planned = 完成 + 顺延 + 漏做 + 放弃）', async () => {
+  await checkAsync('没有漏做，也不产生额外统计', async () => {
     const stats = await F.get('stats', { dim: 'day', from: '2026-10-12', to: '2026-10-14' });
     const first = stats.view.buckets[0];
-    assert.equal(first.missed, 1);
-    assert.equal(first.rolledOut, 1);
-    assert.equal(first.planned, 2);
-  });
-
-  const restored = await F.ok({ action: 'todo_restore', task: '日报' });
-  check('恢复被作废的待办，回到今天', () => {
-    assert.equal(restored.data.id, never.id);
-    const after = F.readState().todos.find((item) => item.id === never.id);
-    assert.equal(after.status, 'open');
-    assert.equal(after.plannedDate, '2026-10-14');
-    assert.equal(after.missedDate, null);
+    assert.equal(first.missed, 0);
+    assert.equal(first.dropped, 0);
+    assert.equal(first.planned, 0);
   });
 
   await F.ok({ action: 'todo_drop', task: '每天背单词', reason: '需求取消' });
@@ -958,7 +956,7 @@ group('10. 脏数据与持久化健壮性');
     assert.equal(state.rolloverLog['2026-10-13'], 0);
   });
 
-  await checkAsync('顺延游标丢失后重新对齐，不会把历史全部重放', async () => {
+  await checkAsync('补算游标丢失后重新对齐，不会把历史全部重放', async () => {
     const state = G.readState();
     assert.equal(state.cursor.rolledThrough, '2026-10-12');
   });
@@ -1239,14 +1237,14 @@ group('15. 「添加进周报文件」插到文件开头');
   check('插到文件开头：新条目在标题之下、旧条目之上', () => {
     assert.match(appended.message, /开头/);
     const text = fsMod.readFileSync(mdFile, 'utf8');
-    assert.match(text, /^#### 周报汇总\n\n#### 2026\.10\.16-2026\.10\.22 - 小组\n/, `开头结构不对：\n${text.slice(0, 160)}`);
-    assert.ok(text.indexOf('2026.10.16-2026.10.22') < text.indexOf('2026.09.07-2026.09.11'), '新条目没排到旧条目之前');
+    assert.match(text, /^#### 周报汇总\n\n#### 2026\.10\.19-2026\.10\.23 - 小组\n/, `开头结构不对：\n${text.slice(0, 160)}`);
+    assert.ok(text.indexOf('2026.10.19-2026.10.23') < text.indexOf('2026.09.07-2026.09.11'), '新条目没排到旧条目之前');
     assert.ok(text.includes('【旧项目】'), '旧内容被弄丢了');
   });
 
   check('写进去的是代码块包住的正文，且不带多余的空白', () => {
     const text = fsMod.readFileSync(mdFile, 'utf8');
-    const block = text.split('#### 2026.10.16-2026.10.22 - 小组')[1].split('#### 2026.09.07')[0];
+    const block = text.split('#### 2026.10.19-2026.10.23 - 小组')[1].split('#### 2026.09.07')[0];
     assert.match(block, /```\n本周完成：\n/, '正文应当包在代码块里');
     assert.match(block, /1\.公共jdbc组件对接加密平台（100%）/);
     assert.match(block, /2\.加密功能自测（10%）/);
@@ -1257,9 +1255,9 @@ group('15. 「添加进周报文件」插到文件开头');
   check('.txt 用纯文本写法：日期行 + 正文，不要代码围栏', () => {
     assert.ok(txt.message.includes('周报.txt'));
     const text = fsMod.readFileSync(txtFile, 'utf8');
-    assert.match(text, /^2026\.10\.16-2026\.10\.22-小组\n/, `txt 开头不对：\n${text.slice(0, 120)}`);
+    assert.match(text, /^2026\.10\.19-2026\.10\.23-小组\n/, `txt 开头不对：\n${text.slice(0, 120)}`);
     assert.ok(!text.includes('```'), '.txt 不该出现代码围栏');
-    assert.ok(text.indexOf('2026.10.16') < text.indexOf('2026.09.07'), 'txt 也要插到最前面');
+    assert.ok(text.indexOf('2026.10.19') < text.indexOf('2026.09.07'), 'txt 也要插到最前面');
   });
 
   await checkAsync('路径不合法时拒绝写入，文件保持原样', async () => {
@@ -1400,6 +1398,16 @@ group('17. 项目建好之后可以改');
     assert.equal(mine.lastActivity, '2026-10-12');
     assert.equal(other.totalCount, 0);
     assert.equal(mine.totalCount, 1);
+  });
+
+  await checkAsync('项目分类可以改，视图与快照都会带出', async () => {
+    await N.ok({ action: 'project_update', id: created.data.id, category: 'personal' });
+    assert.equal(N.readState().projects.find((item) => item.id === created.data.id).category, 'personal');
+    const view = (await N.get('projects')).view.find((item) => item.id === created.data.id);
+    assert.equal(view.category, 'personal');
+    const boot = (await N.get('bootstrap')).view.projects.find((item) => item.id === created.data.id);
+    assert.equal(boot.category, 'personal');
+    await N.ok({ action: 'project_update', id: created.data.id, category: 'work' });
   });
 
   await checkAsync('状态可以来回切，归档会记时间戳', async () => {
