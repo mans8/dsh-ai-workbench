@@ -43,7 +43,7 @@ window.__ModuleLoader__.load({
     };
 
     /** 构建标记：设置弹层底部会显示，用来确认 DSH 到底加载了哪一版。 */
-    const BUILD = 'v1.0.1 · 2026-11-20';
+    const BUILD = 'v1.0.1 · 2026-11-20 · A56 待办说明';
 
     /** 每个分页的页标题（对应参考稿里的「Main Dashboard」）。 */
     const TAB_TITLE = { today: '今天', projects: '项目', reports: '报表', stats: '统计' };
@@ -125,7 +125,7 @@ const CSS = `
  * paper: #F4F7FE 淡紫灰 · card: #FFFFFF · ink: #1B2559 海军蓝 · muted: #A3AED0 · accent: #4318FF 靛蓝 · accent-2: #6AD2FF 浅青
  * nav: 左侧 rail，选中=靛蓝文字 + 图标 + 右缘 3px 指示条 · signature: 白卡台账（20px 圆角 + 极柔阴影）· states: full, empty, loading, error
  * axes: horizon/indigo-cyan/white-card · posture: committed · contrast: pass · skins: horizon(默认), lido, dusk, jade · v5.0.0
- * build: v1.0.1 · A54 今日页密度收紧（统计卡 67px / 台账行 40px / 页头 32px，去掉重复的「今日待办」卡）· A53 新增待办弹层 · A52 设置改回弹窗（面板唯一框，一行一项，分组，删除单列）· A51 曾改整页 · A50 描边照抄 · A49 Pixso 校准 · A47 design.md 契约
+ * build: v1.0.1 · A56 待办说明（新增待办补多行说明；「备注」统一改称「说明」，字段仍是 note）· A55 计划日退场 · A54 今日页密度收紧（统计卡 67px / 台账行 40px / 页头 32px，去掉重复的「今日待办」卡）· A53 新增待办弹层 · A52 设置改回弹窗（面板唯一框，一行一项，分组，删除单列）· A51 曾改整页 · A50 描边照抄 · A49 Pixso 校准 · A47 design.md 契约
  * sweep: 4 FAIL (gate 40, 输入框描边 1.26:1) — 用户明确要求照抄参考稿的 #E0E5F2，属有意偏离，非漏改
  * 其余 0 REFLEX · 0 WARN (app scope, 20 route×skin) · copy: verbatim · 可读性由「字段上方标签 + 占位符」承担
  * 与参考的偏差：参考用紫蓝渐变做「Upgrade to PRO」卡与柱图，这里一律用实色靛蓝（Hallmark 2a 禁紫蓝渐变） */
@@ -1183,11 +1183,11 @@ const CSS = `
                             : null,
                         ),
                       ),
-                      todo.note ? h('span', { className: 'aw-note', title: todo.note }, '备注') : null,
+                      todo.note ? h('span', { className: 'aw-note', title: todo.note }, '说明') : null,
                       h(
                         'div',
                         { className: 'aw-row-acts' },
-                        h(Btn, { small: true, tone: 'ghost', disabled: busy, title: '修改标题 / 项目 / 备注…', onClick: () => setEditing(todo) }, '编辑'),
+                        h(Btn, { small: true, tone: 'ghost', disabled: busy, title: '修改标题 / 项目 / 说明…', onClick: () => setEditing(todo) }, '编辑'),
                         h(Btn, { small: true, tone: 'ghost', disabled: busy, onClick: () => send('todo_undo', { id: todo.id }) }, '撤销'),
                       ),
                     ),
@@ -1234,7 +1234,7 @@ const CSS = `
                             : null,
                         ),
                       ),
-                      todo.note ? h('span', { className: 'aw-note', title: todo.note }, '备注') : null,
+                      todo.note ? h('span', { className: 'aw-note', title: todo.note }, '说明') : null,
                     ),
                   ),
                   historyTotal > HISTORY_PAGE
@@ -1331,7 +1331,7 @@ const CSS = `
           : null,
         todo.repeatLabel ? h('span', { key: 'rep' }, todo.repeatLabel) : null,
         todo.tags.length > 0 ? h('span', { key: 'tags' }, todo.tags.map((tag) => `#${tag}`).join(' ')) : null,
-        todo.note ? h('span', { key: 'note', title: todo.note, style: { cursor: 'help' } }, '备注') : null,
+        todo.note ? h('span', { key: 'note', title: todo.note, style: { cursor: 'help' } }, '说明') : null,
       ].filter(Boolean);
 
       return h(
@@ -1431,7 +1431,7 @@ const CSS = `
                         small: true,
                         tone: 'ghost',
                         disabled: props.busy,
-                        title: '修改标题 / 项目 / 备注 / 截止日…',
+                        title: '修改标题 / 项目 / 说明 / 截止日…',
                         onClick: () => {
                           setOpenMenu(false);
                           props.onEdit();
@@ -1543,10 +1543,10 @@ const CSS = `
           ),
           h(
             Field,
-            { label: '备注' },
+            { label: '说明' },
             h('textarea', {
               className: 'aw-textarea',
-              rows: 2,
+              rows: 3,
               placeholder: '做了什么、卡在哪…',
               value: draft.note,
               onChange: (event) => set({ note: event.target.value }),
@@ -1609,7 +1609,7 @@ const CSS = `
             'div',
             { className: 'aw-note' },
             done
-              ? '这条已经完成：改标题 / 项目 / 备注都会同步到周报与统计。'
+              ? '这条已经完成：改标题 / 项目 / 说明都会同步到周报与统计。'
               : '完成度会写进周报的「1.事项名（30%）」；不填就按 30% 计。',
           ),
         ),
@@ -1623,6 +1623,7 @@ const CSS = `
       const busy = props.busy;
       const [draft, setDraft] = React.useState({
         title: '',
+        note: '',
         projectId: '',
         priority: 'P2',
         dueDate: '',
@@ -1653,6 +1654,7 @@ const CSS = `
         api
           .send('todo_create', {
             title: draft.title,
+            note: draft.note,
             projectId: draft.projectId || null,
             priority: draft.priority,
             dueDate: draft.dueDate || null,
@@ -1660,7 +1662,7 @@ const CSS = `
           })
           .then((result) => {
             if (result.ok) {
-              set({ title: '' });
+              set({ title: '', note: '' });
               if (props.onDone) props.onDone();
             }
           });
@@ -1677,6 +1679,17 @@ const CSS = `
             placeholder: '待办标题',
             value: draft.title,
             onChange: (event) => set({ title: event.target.value }),
+          }),
+        ),
+        h(
+          Field,
+          { label: '说明' },
+          h('textarea', {
+            className: 'aw-textarea',
+            rows: 3,
+            placeholder: '补充背景、验收标准…',
+            value: draft.note,
+            onChange: (event) => set({ note: event.target.value }),
           }),
         ),
         h(

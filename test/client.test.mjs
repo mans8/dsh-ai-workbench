@@ -1266,10 +1266,49 @@ group('3c2. 新增待办弹层：× 关闭 + 纵向全宽表单');
     const form = findNode(tree, (n) => n.type === 'div' && n.props?.className === 'aw-form-vertical');
     assert.ok(form, '缺少纵向表单容器');
     const fields = (form.children || []).filter((n) => n.type === 'div' && /aw-field/.test(n.props?.className || ''));
-    assert.ok(fields.length >= 5, `应有至少 5 个字段，实际 ${fields.length}`);
-    for (const label of ['待办标题', '所属项目', '优先级', '截止日期', '重复任务']) {
+    assert.ok(fields.length >= 6, `应有至少 6 个字段，实际 ${fields.length}`);
+    for (const label of ['待办标题', '说明', '所属项目', '优先级', '截止日期', '重复任务']) {
       assert.ok(textOf(form).includes(label), `缺少字段名称「${label}」`);
     }
+  });
+
+  check('「说明」是多行文本框，紧跟在标题下方', () => {
+    const { tree } = openAdd();
+    const form = findNode(tree, (n) => n.type === 'div' && n.props?.className === 'aw-form-vertical');
+    const fields = (form.children || []).filter((n) => n.type === 'div' && /aw-field/.test(n.props?.className || ''));
+    assert.ok(/说明/.test(textOf(fields[1])), '第二个字段应当是「说明」');
+    const area = findNode(fields[1], (n) => n.type === 'textarea');
+    assert.ok(area, '「说明」应当是 textarea');
+    assert.equal(area.props.rows, 3, '说明应当给到 3 行');
+    assert.ok(/补充背景、验收标准/.test(area.props.placeholder || ''), '说明需要占位提示');
+  });
+
+  check('填写说明后点「新建」，todo_create 带上 note', () => {
+    const api = fakeApi('today', views.today);
+    react.presets({ WorkPage: { 2: 'today' }, TodayTab: { 2: true } });
+    const element = react.createElement(slots.main.component, { api });
+    const findField = (node, predicate) => findNode(node, predicate);
+    const modalOf = (tree) => findField(tree, (n) => n.type === 'div' && n.props?.className === 'aw-modal');
+
+    const first = react.render(element).tree;
+    findField(modalOf(first), (n) => n.type === 'input' && n.props?.placeholder === '待办标题')
+      .props.onChange({ target: { value: '补一条说明' } });
+
+    const filled = react.render(element).tree;
+    const area = findField(modalOf(filled), (n) => n.type === 'textarea' && n.props?.className === 'aw-textarea');
+    assert.ok(area, '找不到说明输入框');
+    area.props.onChange({ target: { value: '先确认导出字段\n再对齐灰度节奏' } });
+
+    const ready = react.render(element).tree;
+    const submit = findField(modalOf(ready), (n) => n.type === 'button' && textOf(n).trim() === '新建');
+    assert.ok(submit, '找不到「新建」按钮');
+    assert.equal(submit.props.disabled, false, '标题非空时「新建」应当可用');
+    submit.props.onClick();
+
+    const creates = api.calls.filter((c) => c[0] === 'send' && c[1] === 'todo_create');
+    assert.equal(creates.length, 1, `应当发一次 todo_create，实际：${JSON.stringify(api.calls)}`);
+    assert.equal(creates[0][2].title, '补一条说明');
+    assert.equal(creates[0][2].note, '先确认导出字段\n再对齐灰度节奏');
   });
 
   check('控件全宽，输入框不再带固定宽度', () => {
@@ -1526,7 +1565,7 @@ group('3c4. 待办可以修改（未完成 / 已完成都支持）');
     const text = textOf(tree);
     assert.ok(text.includes('修改待办'), '没出现修改弹层');
     // 字段齐全
-    for (const label of ['标题', '备注', '项目', '优先级', '截止日', '完成度']) {
+    for (const label of ['标题', '说明', '项目', '优先级', '截止日', '完成度']) {
       assert.ok(text.includes(label), `弹层缺少「${label}」`);
     }
     assert.equal(api.calls.filter((c) => c[0] === 'send').length, 0, '只是打开弹层不该发请求');

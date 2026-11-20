@@ -455,10 +455,10 @@ group('5. 周报 / 月报 / 年报 与历史归档');
     // 未完成的那条：本周完成里按 30% 出现，同时进下周待办（不带百分比）
     assert.match(report.content, /^1\.对账系统灰度方案设计（30%）$/m);
     assert.match(report.content, /^1\.对账系统灰度方案设计$/m);
-    // 周报不再有 Markdown 标题、工时、备注正文
+    // 周报不再有 Markdown 标题、工时、说明正文
     assert.ok(!/^#/m.test(report.content), '周报不该有 Markdown 标题');
     assert.ok(!report.content.includes('工时'), '周报不该出现工时');
-    assert.ok(!report.content.includes('QPS 从 120 提到 900'), '周报不展开备注');
+    assert.ok(!report.content.includes('QPS 从 120 提到 900'), '周报不展开说明');
   });
 
   check('facts 冻结区间、维度与完成数（不再有工时口径字段）', () => {
