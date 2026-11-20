@@ -59,7 +59,7 @@ export function apply(ctx, config) {
   };
 
   /**
-   * 在串行事务里读改写状态：先把自动带入补算推到目标日期，再执行调用方逻辑，最后原子落盘。
+   * 在串行事务里读改写状态：先把跨日补算推到目标日期，再执行调用方逻辑，最后原子落盘。
    * @param date 目标日期（空 = 今天）
    * @param fn (state, key, rollover) => value
    * @returns {{ value, rollover }}
@@ -158,8 +158,8 @@ export function apply(ctx, config) {
             const url = new URL(String(req.url ?? ROUTE), 'http://localhost');
 
             if (req.method === 'GET') {
-              // `today` 驱动自动带入补算；`date` 只是视图要看的那一天。两者分开，
-              // 才能做到「查看历史某天，但带入仍然只推进到今天」。
+              // `today` 驱动跨日补算；`date` 只是视图要看的那一天。两者分开，
+              // 才能做到「查看历史某天，但补算仍然只推进到今天」。
               const runKey = isKey(url.searchParams.get('today')) ? url.searchParams.get('today') : dayKeyOf();
               const payload = await run(runKey, (state, key) => {
                 const view = viewOf(state, key, url.searchParams);
@@ -218,9 +218,7 @@ export function apply(ctx, config) {
                   view: view ?? after,
                   effects: {
                     action: body.action,
-                    plannedDelta: after.stats.plannedCount - before.stats.plannedCount,
                     doneDelta: after.stats.doneCount - before.stats.doneCount,
-                    backlogDelta: after.stats.backlogCount - before.stats.backlogCount,
                     overdueDelta: after.stats.overdueCount - before.stats.overdueCount,
                     todayDone: after.stats.doneCount,
                   },
@@ -266,10 +264,7 @@ function rolloverEffect(rollover) {
   if (!rollover || !rollover.days) return null;
   return {
     days: rollover.days,
-    moved: rollover.moved.length,
     created: rollover.created.length,
-    missed: rollover.missed.length,
-    entries: rollover.moved.slice(-5).map((item) => ({ title: item.title, from: item.from, to: item.to })),
   };
 }
 

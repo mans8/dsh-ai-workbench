@@ -338,17 +338,17 @@ async function bootHost(label, startClock = '2026-10-12') {
 
 /** 造一份有代表性的工作台账，然后把各视图抓下来。 */
 async function collectViews() {
-  // 先在 2026-10-09 建账，再拨到 10-12 —— 这样自动带入、逾期、积压都是真实算出来的。
+  // 先在 2026-10-09 建账，再拨到 10-12 —— 这样逾期、今日待办都是真实算出来的。
   const host = await bootHost('client-fixture', '2026-10-09');
   const order = (await host.post({ action: 'project_create', name: '订单中台', code: 'OMS', emoji: '📦', owner: '我' })).result.data.id;
   const recon = (await host.post({ action: 'project_create', name: '对账系统', code: 'REC', emoji: '🧾' })).result.data.id;
 
-  await host.post({ action: 'todo_create', title: '订单导出接口重构', project: '订单中台', plannedDate: '2026-10-05', priority: 'P1', tags: ['重构'] });
-  await host.post({ action: 'todo_create', title: '支付回调幂等性改造', project: '订单中台', plannedDate: '2026-10-06', priority: 'P0' });
-  await host.post({ action: 'todo_create', title: '对账系统灰度方案设计', project: '对账系统', plannedDate: '2026-10-07', dueDate: '2026-10-09' });
-  await host.post({ action: 'todo_create', title: '整理接口文档', plannedDate: '2026-10-12', progress: 40 });
-  await host.post({ action: 'todo_create', title: '背单词', plannedDate: '2026-10-11' });
-  await host.post({ action: 'todo_create', title: '与产品对齐导出字段', plannedDate: '2026-10-12' });
+  await host.post({ action: 'todo_create', title: '订单导出接口重构', project: '订单中台', priority: 'P1', tags: ['重构'] });
+  await host.post({ action: 'todo_create', title: '支付回调幂等性改造', project: '订单中台', priority: 'P0' });
+  await host.post({ action: 'todo_create', title: '对账系统灰度方案设计', project: '对账系统', dueDate: '2026-10-09' });
+  await host.post({ action: 'todo_create', title: '整理接口文档', progress: 40 });
+  await host.post({ action: 'todo_create', title: '背单词' });
+  await host.post({ action: 'todo_create', title: '与产品对齐导出字段' });
 
   await host.post({ action: 'todo_complete', task: '订单导出接口重构', date: '2026-10-05', note: 'QPS 从 120 提到 900' });
   await host.post({ action: 'todo_complete', task: '支付回调幂等性改造', date: '2026-10-06' });
@@ -358,7 +358,6 @@ async function collectViews() {
 
   // ── 拨到今天 ──
   host.setClock('2026-10-12');
-  await host.post({ action: 'todo_reschedule', task: '背单词', toBacklog: true });
 
   await host.post({ action: 'todo_create', title: '每日站会', repeat: { freq: 'workdays' }, priority: 'P2' });
   await host.post({ action: 'todo_create', title: '周一复盘', repeat: { freq: 'weekly', weekdays: [1] } });
@@ -725,10 +724,10 @@ group('2c. 数据仓库：乱序响应不能覆盖新数据');
 
 group('3. 真实数据是否正确落到界面上');
 {
-  check('今日页显示逾期 / 积压提示', () => {
+  check('今日页显示逾期提示', () => {
     const { text } = renderPage('today');
     assert.ok(text.includes('逾期'), '缺少逾期提示');
-    assert.ok(text.includes('积压'), '缺少积压提示');
+    assert.ok(!text.includes('积压'), '积压概念已经下线');
   });
 
   check('报表页列出三份报表并标注状态', () => {
@@ -1111,11 +1110,11 @@ group('4. 交互组件：设置弹层 / 日期编辑器 / 报表编辑器');
 
   check('空数据也不崩（所有视图为空时）', () => {
     const empty = {
-      today: { date: '2026-10-12', weekday: '一', weekLabel: 'x', kind: 'workday', holidayName: '', stats: { plannedCount: 0, doneCount: 0, carriedCount: 0, backlogCount: 0, overdueCount: 0, futureCount: 0, openCount: 0, progress: 0 }, todos: [], backlog: [], overdue: [], done: [], weekDone: [], dropped: [], carriedIn: [], week: { from: '2026-10-12', to: '2026-10-18', week: 42, year: 2026 }, logs: [], projects: [], warnings: [] },
-      todos: { total: 0, counts: { open: 0, done: 0, dropped: 0, carried: 0 }, tags: [], todos: [] },
+      today: { date: '2026-10-12', weekday: '一', weekLabel: 'x', kind: 'workday', holidayName: '', stats: { openCount: 0, plannedCount: 0, doneCount: 0, weekDoneCount: 0, historyDoneCount: 0, overdueCount: 0, progress: 0 }, todos: [], overdue: [], done: [], weekDone: [], historyDone: [], historyTotal: 0, dropped: [], week: { from: '2026-10-12', to: '2026-10-18', week: 42, year: 2026 }, logs: [], projects: [], warnings: [] },
+      todos: { total: 0, counts: { open: 0, done: 0, dropped: 0 }, tags: [], todos: [] },
       projects: [],
       reports: { total: 0, counts: { draft: 0, final: 0, archived: 0 }, projects: [], reports: [] },
-      stats: { dim: 'month', from: '2026-01-01', to: '2026-12-31', projectId: null, buckets: [], totals: { done: 0, created: 0, dropped: 0, missed: 0, rolledOut: 0, planned: 0, onTime: 0, completionRate: 0, onTimeRate: 0 }, byProject: [], heatmap: null },
+      stats: { dim: 'month', from: '2026-01-01', to: '2026-12-31', projectId: null, buckets: [], totals: { done: 0, created: 0, dropped: 0, missed: 0, planned: 0, completionRate: 0 }, heatmap: null },
     };
     const saved = {};
     for (const key of Object.keys(empty)) saved[key] = views[key];
@@ -1211,8 +1210,8 @@ group('3b2. 顶部与今日页的冗余 chip 已去掉');
 group('3c. 优先级 P0~P3 的含义必须写在界面上');
 {
   check('新增弹层里的优先级下拉带含义，而不是光秃秃的 P0/P1/P2/P3', () => {
-    // TodayTab 的 hook：0 showBacklog / 1 showAllHistory / 2 editing / 3 adding
-    const { text } = renderPage('today', { TodayTab: { 3: true } });
+    // TodayTab 的 hook：0 showAllHistory / 1 editing / 2 adding / 3 dirty / 4 confirmClose
+    const { text } = renderPage('today', { TodayTab: { 2: true } });
     for (const label of ['P0 · 紧急', 'P1 · 高', 'P2 · 中', 'P3 · 低']) {
       assert.ok(text.includes(label), `下拉里缺少「${label}」`);
     }
@@ -1248,8 +1247,8 @@ group('3c. 优先级 P0~P3 的含义必须写在界面上');
 
 group('3c2. 新增待办弹层：× 关闭 + 纵向全宽表单');
 {
-  /** 打开「新增待办」弹层；extra 可预设 TodayTab 后续 hook（4=脏标记）。 */
-  const openAdd = (extra = {}) => renderPage('today', { TodayTab: { 3: true, ...extra } });
+  /** 打开「新增待办」弹层；extra 可预设 TodayTab 后续 hook（3=脏标记）。 */
+  const openAdd = (extra = {}) => renderPage('today', { TodayTab: { 2: true, ...extra } });
 
   check('标题栏右上角有 × 关闭按钮', () => {
     const { tree } = openAdd();
@@ -1268,7 +1267,7 @@ group('3c2. 新增待办弹层：× 关闭 + 纵向全宽表单');
     assert.ok(form, '缺少纵向表单容器');
     const fields = (form.children || []).filter((n) => n.type === 'div' && /aw-field/.test(n.props?.className || ''));
     assert.ok(fields.length >= 5, `应有至少 5 个字段，实际 ${fields.length}`);
-    for (const label of ['待办标题', '所属项目', '优先级', '计划日期', '重复任务']) {
+    for (const label of ['待办标题', '所属项目', '优先级', '截止日期', '重复任务']) {
       assert.ok(textOf(form).includes(label), `缺少字段名称「${label}」`);
     }
   });
@@ -1302,7 +1301,7 @@ group('3c2. 新增待办弹层：× 关闭 + 纵向全宽表单');
   const closeButton = (tree) => findNode(tree, (n) => n.type === 'button' && n.props?.['aria-label'] === '关闭');
 
   check('点 × 时：干净表单直接关闭', () => {
-    const first = renderPage('today', { TodayTab: { 3: true } });
+    const first = renderPage('today', { TodayTab: { 2: true } });
     const close = closeButton(first.tree);
     assert.ok(close, '缺少 × 按钮');
     close.props.onClick();
@@ -1312,7 +1311,7 @@ group('3c2. 新增待办弹层：× 关闭 + 纵向全宽表单');
   });
 
   check('点 × 时：脏表单先弹确认，放弃填写才真正关闭', () => {
-    const first = renderPage('today', { TodayTab: { 3: true, 4: true } });
+    const first = renderPage('today', { TodayTab: { 2: true, 3: true } });
     assert.ok(!first.text.includes('确认放弃填写？'), '没点 × 之前不该弹确认');
     closeButton(first.tree).props.onClick();
     const after = react.render(react.createElement(slots.main.component, { api: first.api }));
@@ -1363,10 +1362,11 @@ group('3e. 今日页只保留一块面板，各节用分割线');
     assert.match(css, /^\.aw-board,\.aw-card\{[^}]*background:var\(--paper-2\)/m, '.aw-board 应当是白卡面');
   });
 
-  check('积压折叠在「今日待办」节里，用的是虚线而不是单独一节', () => {
-    const { tree } = renderPage('today');
+  check('积压概念已经下线：今日页没有折叠分组', () => {
+    const { tree, text } = renderPage('today');
+    assert.ok(!text.includes('积压'), '不该再出现积压文案');
     const folds = countNodes(tree, (n) => n.type === 'div' && n.props?.className === 'aw-fold');
-    assert.equal(folds, 1, '积压应当折叠在待办节里（夹具里正好有 1 条积压）');
+    assert.equal(folds, 0, '不该再有折叠分组');
   });
 
   check('本周完成用实心打勾方块，而不是删除线', () => {
@@ -1410,11 +1410,14 @@ group('3c2. 今日待办的删除收在 ⋯ 菜单里（排在「放弃」后面
     assert.ok(!closedLabels.includes('删除'), `收起时不该直接露出删除：${JSON.stringify(closedLabels)}`);
     assert.ok(closedLabels.includes('⋯'));
 
-    // 展开后：推到明天 / 今天做 / 转积压 / 放弃 / 删除
+    // 展开后：编辑 / 进度 / 放弃 / 删除（推到明天、今天做、转积压已随计划日一起下线）
     const opened = openMenu(element);
     const labels = collectButtons(opened);
-    for (const want of ['推到明天', '今天做', '转积压', '放弃', '删除']) {
+    for (const want of ['编辑', '进度', '放弃', '删除']) {
       assert.ok(labels.includes(want), `菜单里缺少「${want}」：${JSON.stringify(labels)}`);
+    }
+    for (const gone of ['推到明天', '今天做', '转积压']) {
+      assert.ok(!labels.includes(gone), `「${gone}」已经下线，不该再出现：${JSON.stringify(labels)}`);
     }
     assert.ok(
       labels.indexOf('删除') > labels.indexOf('放弃'),
@@ -1523,7 +1526,7 @@ group('3c4. 待办可以修改（未完成 / 已完成都支持）');
     const text = textOf(tree);
     assert.ok(text.includes('修改待办'), '没出现修改弹层');
     // 字段齐全
-    for (const label of ['标题', '备注', '项目', '优先级', '计划日', '截止日', '完成度']) {
+    for (const label of ['标题', '备注', '项目', '优先级', '截止日', '完成度']) {
       assert.ok(text.includes(label), `弹层缺少「${label}」`);
     }
     assert.equal(api.calls.filter((c) => c[0] === 'send').length, 0, '只是打开弹层不该发请求');

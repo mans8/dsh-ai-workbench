@@ -7,7 +7,7 @@ function dayCount(from, to) {
  * AI 工作台账 — Host 半体端到端测试（mock Cordis ctx）。
  *
  * 不依赖真实 DSH：伪造 webServer/connection/tools 三个服务，把 HTTP 路由当成
- * 被测接口驱动，覆盖自动带入、重复任务、日历工作日、统计与报表归档这几条核心路径。
+ * 被测接口驱动，覆盖跨日补算、重复任务、日历工作日、统计与报表归档这几条核心路径。
  *
  * 时间完全由 `today` 参数驱动（时钟木偶），所以测试与机器真实日期无关：
  *   A.day('2026-10-13')   → 之后的请求都当作「今天是 10-13」
@@ -240,7 +240,7 @@ group('1. 日历与法定工作日（2026）');
 
 const A = await harness('rollover');
 
-group('2. 待办清单与跨日自动带入');
+group('2. 待办清单与未完成事项的持续可见');
 {
   const boot = await A.get('bootstrap');
   check('bootstrap 返回今日、设置、游标、计数与日历', () => {
@@ -263,7 +263,6 @@ group('2. 待办清单与跨日自动带入');
     action: 'todo_create',
     title: '订单导出接口重构',
     project: '订单中台',
-    plannedDate: '2026-10-12',
     priority: 'P1',
   });
   const todoId = created.data.id;
@@ -276,30 +275,29 @@ group('2. 待办清单与跨日自动带入');
   });
 
   const day2 = await A.day('2026-10-13').get('today');
-  check('次日未完成 → 自动出现在次日，仍是同一条记录', () => {
+  check('次日未完成 → 仍留在今日列表，还是同一条记录', () => {
     assert.equal(day2.view.todos.length, 1);
     assert.equal(day2.view.todos[0].id, todoId);
-    assert.equal(day2.view.todos[0].plannedDate, '2026-10-13');
     assert.equal(day2.rollover.days, 1);
-    assert.equal(day2.rollover.moved, 1);
+    assert.equal(day2.rollover.created, 0);
   });
 
   const day4 = await A.day('2026-10-15').get('today');
-  check('隔两天再打开：一次补算 2 天，计划日推进到当天', () => {
-    assert.equal(day4.view.todos[0].plannedDate, '2026-10-15');
-    assert.equal(A.readState().todos.find((item) => item.id === todoId).rolloverCount, 3);
+  check('隔两天再打开：一次补算 2 天，记录不变', () => {
+    assert.equal(day4.view.todos.length, 1);
+    assert.equal(day4.view.todos[0].id, todoId);
     assert.equal(day4.rollover.days, 2);
   });
 
-  check('自动带入不产生新记录（todos 里仍然只有 1 条）', () => {
+  check('跨日之后仍是同一条记录（todos 里仍然只有 1 条）', () => {
     assert.equal(A.readState().todos.length, 1);
   });
 
-  check('补算按天记账（内部指标保留）', () => {
-    const state = A.readState();
-    assert.equal(state.rolloverLog['2026-10-12'], 1);
-    assert.equal(state.rolloverLog['2026-10-13'], 1);
-    assert.equal(state.rolloverLog['2026-10-14'], 1);
+  check('补算不再写计划日', () => {
+    const todo = A.readState().todos.find((item) => item.id === todoId);
+    assert.equal(todo.plannedDate, null);
+    assert.equal(todo.firstPlannedDate, null);
+    assert.equal(todo.rolloverCount, 0);
   });
 
   const done = await A.ok({ action: 'todo_complete', task: '订单导出', date: '2026-10-15' });
@@ -309,7 +307,6 @@ group('2. 待办清单与跨日自动带入');
     assert.ok(log, '找不到流水');
     assert.equal(log.title, '订单导出接口重构');
     assert.equal(log.source, 'todo');
-    assert.equal(log.rolloverCount, 3);
     assert.equal(log.voided, false);
     assert.equal('hours' in log, false);
   });
@@ -321,35 +318,24 @@ group('2. 待办清单与跨日自动带入');
   });
 
   const undone = await A.ok({ action: 'todo_undo', task: '订单导出' });
-  check('撤销完成：只作废事实流水，待办回到未完成', () => {
+  await checkAsync('撤销完成：只作废事实流水，待办回到今日列表', async () => {
     const state = A.readState();
     const log = state.logs.find((item) => item.id === undone.data.logId);
     assert.equal(log.voided, true);
     assert.ok(log.voidedAt);
     const todo = state.todos.find((item) => item.id === todoId);
     assert.equal(todo.status, 'open');
-    assert.equal(todo.plannedDate, '2026-10-15');
     assert.equal(todo.logId, null);
-  });
-
-  await A.ok({ action: 'todo_reschedule', task: '订单导出', deltaDays: 5 });
-  check('reschedule 平移计划日', () => {
-    assert.equal(A.readState().todos.find((item) => item.id === todoId).plannedDate, '2026-10-20');
-  });
-
-  await A.ok({ action: 'todo_reschedule', task: '订单导出', toBacklog: true });
-  await checkAsync('转入积压后不再出现在今日列表', async () => {
-    const view = await A.get('today');
-    assert.equal(view.view.todos.length, 0);
-    assert.equal(view.view.backlog.length, 1);
-    assert.equal(view.view.backlog[0].title, '订单导出接口重构');
-  });
-
-  await A.ok({ action: 'todo_reschedule', task: '订单导出', toToday: true });
-  await checkAsync('拉回今天', async () => {
     const view = await A.get('today');
     assert.equal(view.view.todos.length, 1);
-    assert.equal(view.view.todos[0].plannedDate, '2026-10-15');
+    assert.equal(view.view.todos[0].id, todoId);
+  });
+
+  await checkAsync('改期动作已经下线', async () => {
+    const result = await A.post({ action: 'todo_reschedule', task: '订单导出', deltaDays: 5 });
+    assert.equal(result.status, 200);
+    assert.equal(result.json.result.ok, false);
+    assert.match(result.json.result.error, /未知操作/);
   });
 }
 
@@ -357,7 +343,7 @@ group('2. 待办清单与跨日自动带入');
  * 3. 重复任务
  * ------------------------------------------------------------------ */
 
-group('3. 重复任务（自动带入 + 一次只留一个未完成实例）');
+group('3. 重复任务（一次只留一个未完成实例）');
 {
   await A.ok({ action: 'todo_create', title: '每日站会', repeat: { freq: 'workdays' } });
 
@@ -365,20 +351,12 @@ group('3. 重复任务（自动带入 + 一次只留一个未完成实例）');
   check('重复任务模板建成后立刻开出当天实例（10-15 周四，工作日）', () => {
     const instances = day1.view.todos.filter((item) => item.title === '每日站会');
     assert.equal(instances.length, 1);
-    assert.equal(instances[0].plannedDate, '2026-10-15');
   });
 
   await A.day('2026-10-19').get('today');
-  check('未完成的重复任务实例带入 4 天，且不会堆积成多条', () => {
+  check('几天没打开也不会堆积出多条实例', () => {
     const instances = A.readState().todos.filter((item) => item.title === '每日站会' && !item.isTemplate);
     assert.equal(instances.length, 1, `实际 ${instances.length} 条`);
-    assert.equal(instances[0].plannedDate, '2026-10-19');
-    assert.equal(instances[0].rolloverCount, 4); // 10-16、17、18、19
-  });
-
-  check('周末不会开出新的实例', () => {
-    const weekend = A.readState().todos.filter((item) => item.title === '每日站会' && item.plannedDate === '2026-10-17');
-    assert.equal(weekend.length, 0);
   });
 
   const instancesNow = A.readState().todos.filter((item) => item.title === '每日站会' && !item.isTemplate);
@@ -388,14 +366,12 @@ group('3. 重复任务（自动带入 + 一次只留一个未完成实例）');
   check('完成今天这一条后，次日开出全新的实例', () => {
     const open = day4.view.todos.filter((item) => item.title === '每日站会');
     assert.equal(open.length, 1);
-    assert.equal(open[0].plannedDate, '2026-10-20');
-    assert.equal(A.readState().todos.find((item) => item.id === open[0].id).rolloverCount, 0);
+    assert.notEqual(open[0].id, instancesNow[0].id);
   });
 
   check('模板本身不参与补算、不出现在今日列表', () => {
     const templates = A.readState().todos.filter((item) => item.isTemplate);
     assert.equal(templates.length, 1);
-    assert.equal(templates[0].plannedDate, null);
     assert.equal(templates[0].repeat.freq, 'workdays');
   });
 
@@ -420,9 +396,10 @@ group('5. 周报 / 月报 / 年报 与历史归档');
   C_PROJECT.order = (await C.ok({ action: 'project_create', name: '订单中台', code: 'OMS', emoji: '📦', owner: '我' })).data.id;
   C_PROJECT.recon = (await C.ok({ action: 'project_create', name: '对账系统', code: 'REC', emoji: '🧾' })).data.id;
 
-  await C.ok({ action: 'todo_create', title: '订单导出接口重构', project: '订单中台', plannedDate: '2026-10-05' });
-  await C.ok({ action: 'todo_create', title: '支付回调幂等性改造', project: '订单中台', plannedDate: '2026-10-06' });
-  await C.ok({ action: 'todo_create', title: '对账系统灰度方案设计', project: '对账系统', plannedDate: '2026-10-07' });
+  // 待办在 10-05 ~ 10-07 间建出来（createdAt 决定它属于哪一期），随后在 10-05/10-06 完成。
+  await C.day('2026-10-05').ok({ action: 'todo_create', title: '订单导出接口重构', project: '订单中台' });
+  await C.day('2026-10-06').ok({ action: 'todo_create', title: '支付回调幂等性改造', project: '订单中台' });
+  await C.day('2026-10-07').ok({ action: 'todo_create', title: '对账系统灰度方案设计', project: '对账系统' });
 
   await C.ok({ action: 'todo_complete', task: '订单导出接口重构', date: '2026-10-05', note: 'QPS 从 120 提到 900' });
   await C.ok({ action: 'todo_complete', task: '支付回调幂等性改造', date: '2026-10-06' });
@@ -557,7 +534,7 @@ group('5. 周报 / 月报 / 年报 与历史归档');
 
   const contentBefore = (await C.get('report', { id: reportId })).view.content;
   await C.ok({ action: 'todo_complete', task: '对账系统灰度方案设计', date: '2026-10-07' });
-  await C.ok({ action: 'log_note', title: '补录', date: '2026-10-12' });
+  await C.day('2026-10-12').ok({ action: 'log_note', title: '补录', date: '2026-10-12' });
   const contentAfter = (await C.get('report', { id: reportId })).view.content;
   check('归档之后新增流水，历史报表内容一字不变', () => {
     assert.equal(contentAfter, contentBefore);
@@ -830,7 +807,7 @@ group('8. 设置、节假日覆盖与协议边界');
   });
 
   await E.day('2026-10-01');
-  await checkAsync('系统时钟回拨时不撤销已发生的带入，也不回退游标', async () => {
+  await checkAsync('系统时钟回拨时不撤销已发生的补算，也不回退游标', async () => {
     const view = await E.get('today');
     assert.equal(view.view.date, '2026-10-01');
     assert.ok(E.readState().cursor.rolledThrough >= '2026-10-12');
@@ -874,25 +851,26 @@ group('8. 设置、节假日覆盖与协议边界');
 
 const F = await harness('policies');
 
-group('9. 旧策略字段被忽略，一律自动带入');
+group('9. 旧策略字段与计划日一律被忽略');
 {
-  // 旧数据里可能还带着 rollover: 'backlog' / 'never'，现在一律不参与决策。
-  await F.ok({ action: 'todo_create', title: '每天背单词', plannedDate: '2026-10-12', rollover: 'backlog' });
+  // 旧数据里可能还带着 plannedDate / rollover / backlog，现在一律不参与决策。
+  await F.ok({ action: 'todo_create', title: '每天背单词', plannedDate: '2026-10-12', rollover: 'backlog', backlog: true });
   await F.ok({ action: 'todo_create', title: '今天必须交的日报', plannedDate: '2026-10-12', rollover: 'never' });
 
   await F.day('2026-10-14');
-  await checkAsync('两条都自动带到今天，不进积压、不计漏做', async () => {
+  await checkAsync('两条都还在今日列表里，也没有积压分组', async () => {
     const later = await F.get('today');
     assert.equal(later.view.todos.length, 2);
-    assert.equal(later.view.backlog.length, 0);
-    assert.ok(later.view.todos.every((item) => item.plannedDate === '2026-10-14'));
+    assert.equal('backlog' in later.view, false);
   });
 
-  check('两条都还是未完成，没有历史漏做记录', () => {
+  check('新数据不写计划日，旧策略字段也不会落库', () => {
     const state = F.readState();
     assert.equal(state.todos.length, 2);
     assert.ok(state.todos.every((item) => item.status === 'open'));
     assert.ok(state.todos.every((item) => item.missedDate === null));
+    assert.ok(state.todos.every((item) => item.plannedDate === null && item.firstPlannedDate === null));
+    assert.ok(state.todos.every((item) => item.backlog === false));
   });
 
   await checkAsync('没有漏做，也不产生额外统计', async () => {
@@ -941,7 +919,8 @@ group('10. 脏数据与持久化健壮性');
   await checkAsync('脏状态文件不致命：规范化后仍能正常服务', async () => {
     const view = await G.get('today');
     assert.equal(view.view.date, '2026-10-12');
-    assert.equal(view.view.todos.length, 1);
+    // 今日列表 = 所有未完成待办，所以脏数据里那条补全后的待办也会出现。
+    assert.equal(view.view.todos.length, 2);
   });
 
   check('脏值被夹紧或丢弃', () => {
@@ -1072,8 +1051,9 @@ group('14. 周报草稿严格按公司模板输出');
   // 造出与真机示例一模一样的场景
   await K.ok({ action: 'project_create', name: '示例银行-村镇银行', emoji: '🏦' });
   await K.ok({ action: 'project_create', name: '示例政务客户', emoji: '🏛' });
+  // 待办在各自的日期建出来：createdAt 决定它属于哪一期周报。
   const mk = (title, project, date, progress) =>
-    K.ok({ action: 'todo_create', title, project, plannedDate: date, progress });
+    K.day(date).ok({ action: 'todo_create', title, project, progress });
   await mk('村镇银行生产定时短信无法处理问题修复', '示例银行-村镇银行', '2026-10-20', 30);
   const jdbc = (await mk('公共jdbc组件对接加密平台', '示例政务客户', '2026-10-19', 0)).data.id;
   const hist = (await mk('历史数据加解密工具对接加密平台', '示例政务客户', '2026-10-19', 0)).data.id;

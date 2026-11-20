@@ -56,5 +56,5 @@ for (let i = 0; i < 4; i++) {
 | `server.mjs` | 真 Host 半体 + 静态站点 + 原样提供 `client.js` |
 | `entry.js` | 浏览器侧入口：错误捕获 + 装配 `__ModuleLoader__` + 挂载面板 |
 | `build.mjs` | 用 esbuild 把 entry.js 和真 React 打成 `site/bundle.js` |
-| `seed.mjs` | 通过真实 API 灌示例数据（含自动带入、逾期、积压、报表） |
+| `seed.mjs` | 通过真实 API 灌示例数据（含跨日补算、逾期、报表） |
 | `site/index.html` | 宿主页面（补齐 `--dsw-alias-*` 主题令牌，让外观接近 DSH） |

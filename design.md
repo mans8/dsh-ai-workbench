@@ -153,7 +153,7 @@ padding: 22px 24px;
 
 - 一排用 `.aw-metrics`：`grid-template-columns:repeat(auto-fit,minmax(168px,1fr))`，卡高约 67px
 - **今日页不再重复「今日待办」卡**：那个数字就是 `.aw-dayhead` 里唯一的大数字
-- **每张卡必须有图标**。不给 `icon` 就由 `iconForLabel()` 按标签猜（完成/逾期/草稿/积压）
+- **每张卡必须有图标**。不给 `icon` 就由 `iconForLabel()` 按标签猜（完成/逾期/草稿）
 - 标签**不要 `white-space:nowrap`**（会把栅格撑破），靠 `text-overflow:ellipsis` 收
 
 ### 4.3 台账行 `.aw-row`

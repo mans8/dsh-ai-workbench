@@ -798,7 +798,6 @@ const CSS = `
       alert: ['M8 3.4 13.2 12.6H2.8z', 'M8 6.9v2.6', 'M8 11.2v.1'],
       clock: ['M8 3a5 5 0 1 0 0 10A5 5 0 0 0 8 3z', 'M8 5.6V8.2l1.9 1.2'],
       draft: ['M4.2 2.8h5.4l2.2 2.2v8.2H4.2z', 'M9.4 2.9v2.3h2.3'],
-      backlog: ['M2.9 5.2h10.2', 'M4.4 5.2v7.3h7.2V5.2', 'M6.4 8.2h3.2'],
       chart: ['M2.8 13.2h10.4', 'M4.4 13.2V8.4', 'M8 13.2V4.6', 'M11.6 13.2v-3.4'],
     };
 
@@ -809,7 +808,6 @@ const CSS = `
       if (/截止|提醒/.test(text)) return 'clock';
       if (/逾期|超期/.test(text)) return 'alert';
       if (/草稿|报表/.test(text)) return 'draft';
-      if (/积压/.test(text)) return 'backlog';
       return 'done';
     }
 
@@ -1009,7 +1007,7 @@ const CSS = `
 
     /**
      * 今日页 = 每天真正会用的那一屏，只有三节：
-     *   1. 今日待办（积压折叠在它下面，不单独占节）
+     *   1. 今日待办（所有未完成待办，没做完就一直留在这里）
      *   2. 新增待办（含重复任务模板的管理）
      *   3. 本周完成（绿色打勾）
      * 这一屏只回答「今天做什么」。
@@ -1018,7 +1016,6 @@ const CSS = `
       const api = props.api;
       const view = props.view;
       const busy = props.busy;
-      const [showBacklog, setShowBacklog] = React.useState(false);
       const [showAllHistory, setShowAllHistory] = React.useState(false);
       const [editing, setEditing] = React.useState(null);
       // 新增待办改成弹层：入口在「今日待办」节头上
@@ -1035,7 +1032,7 @@ const CSS = `
       const historyDone = Array.isArray(view.historyDone) ? view.historyDone : [];
       const historyTotal = Number(view.historyTotal ?? historyDone.length) || 0;
       const historyList = showAllHistory ? historyDone : historyDone.slice(0, HISTORY_PAGE);
-      // 顶部一排统计卡（与参考稿的 5 张卡同构）
+      // 顶部一排统计卡：本周完成 / 逾期 /（有草稿时）待归档草稿
       const boot = props.boot;
       const statCards = [
         { label: '本周完成', value: String(view.stats.weekDoneCount), unit: '项', icon: 'done' },
@@ -1048,7 +1045,7 @@ const CSS = `
         },
         boot && boot.counts.draftReports > 0
           ? { label: '待归档草稿', value: String(boot.counts.draftReports), unit: '份', icon: 'draft' }
-          : { label: '积压', value: String(view.stats.backlogCount), unit: '项', icon: 'backlog' },
+          : null,
       ].filter(Boolean);
 
       // × 与点遮罩走同一条关闭路径：脏表单先确认，干净的直接关
@@ -1097,7 +1094,7 @@ const CSS = `
           h('div', { className: 'aw-daybar', title: '今天的完成比例' }, h('i', { style: { width: `${Math.min(100, Number(view.stats.progress) || 0)}%` } })),
         ),
 
-        // 一排统计卡：本周完成 / 逾期 / 本月已录 / 草稿或积压
+        // 一排统计卡：本周完成 / 逾期 /（有草稿时）待归档草稿
         h(
           'div',
           { className: 'aw-metrics' },
@@ -1138,7 +1135,6 @@ const CSS = `
                       busy,
                       onComplete: () => send('todo_complete', { id: todo.id }),
                       onUndo: () => send('todo_undo', { id: todo.id }),
-                      onReschedule: (payload) => send('todo_reschedule', { id: todo.id, ...payload }),
                       onDrop: () => send('todo_drop', { id: todo.id, reason: '不做' }),
                       onDelete: () => send('todo_delete', { id: todo.id }),
                       onProgress: (progress) => send('todo_update', { id: todo.id, progress }),
@@ -1146,38 +1142,6 @@ const CSS = `
                     }),
                   ),
                 ),
-            // 积压折叠在这一节里 —— 它只是「今天没排上」的另一种状态，不值得单独占一节
-            view.backlog.length > 0
-              ? h(
-                  'div',
-                  { className: 'aw-fold' },
-                  h(
-                    'button',
-                    { type: 'button', className: 'aw-fold-head', onClick: () => setShowBacklog(!showBacklog) },
-                    h('span', null, `积压 ${view.backlog.length} 项`),
-                    h('span', null, showBacklog ? '收起' : '展开'),
-                  ),
-                  showBacklog
-                    ? h(
-                        'div',
-                        { className: 'aw-list aw-scroll', style: { marginTop: 8 } },
-                        view.backlog.map((todo) =>
-                          h(TodoRow, {
-                            key: todo.id,
-                            todo,
-                            busy,
-                            onComplete: () => send('todo_complete', { id: todo.id }),
-                            onReschedule: (payload) => send('todo_reschedule', { id: todo.id, ...payload }),
-                            onDrop: () => send('todo_drop', { id: todo.id, reason: '不做' }),
-                            onDelete: () => send('todo_delete', { id: todo.id }),
-                            onProgress: (progress) => send('todo_update', { id: todo.id, progress }),
-                            onEdit: () => setEditing(todo),
-                          }),
-                        ),
-                      )
-                    : null,
-                )
-              : null,
           ),
 
           // ── 2. 本周完成 ──
@@ -1400,7 +1364,7 @@ const CSS = `
                     small: true,
                     tone: 'ghost',
                     disabled: props.busy,
-                    title: '改期 / 转积压 / 放弃 / 删除',
+                    title: '进度 / 放弃 / 删除',
                     onClick: () => {
                       setOpenMenu(!openMenu);
                       setConfirmDel(false);
@@ -1467,7 +1431,7 @@ const CSS = `
                         small: true,
                         tone: 'ghost',
                         disabled: props.busy,
-                        title: '修改标题 / 项目 / 备注 / 计划日…',
+                        title: '修改标题 / 项目 / 备注 / 截止日…',
                         onClick: () => {
                           setOpenMenu(false);
                           props.onEdit();
@@ -1490,9 +1454,6 @@ const CSS = `
                       },
                       '进度',
                     ),
-                    h(Btn, { key: 'tomorrow', small: true, disabled: props.busy, onClick: () => props.onReschedule({ deltaDays: 1 }) }, '推到明天'),
-                    h(Btn, { key: 'today', small: true, disabled: props.busy, onClick: () => props.onReschedule({ toToday: true }) }, '今天做'),
-                    h(Btn, { key: 'backlog', small: true, disabled: props.busy, onClick: () => props.onReschedule({ toBacklog: true }) }, '转积压'),
                     h(Btn, { key: 'drop', small: true, tone: 'danger', disabled: props.busy, onClick: props.onDrop }, '放弃'),
                     h(
                       Btn,
@@ -1528,7 +1489,6 @@ const CSS = `
         note: item.note || '',
         projectId: item.projectId || '',
         priority: item.priority || 'P2',
-        plannedDate: item.plannedDate || '',
         dueDate: item.dueDate || '',
         progress: String(item.progress ?? 0),
       });
@@ -1549,7 +1509,6 @@ const CSS = `
           priority: draft.priority,
           dueDate: draft.dueDate,
         };
-        if (draft.plannedDate) payload.plannedDate = draft.plannedDate;
         if (!done) payload.progress = draft.progress === '' ? 0 : Number(draft.progress);
         api.send('todo_update', payload).then((result) => {
           if (result.ok) onClose();
@@ -1617,16 +1576,6 @@ const CSS = `
             ),
             h(
               Field,
-              { label: '计划日' },
-              h('input', {
-                className: 'aw-input',
-                type: 'date',
-                value: draft.plannedDate,
-                onChange: (event) => set({ plannedDate: event.target.value }),
-              }),
-            ),
-            h(
-              Field,
               { label: '截止日' },
               h('input', {
                 className: 'aw-input',
@@ -1676,7 +1625,7 @@ const CSS = `
         title: '',
         projectId: '',
         priority: 'P2',
-        plannedDate: localToday(),
+        dueDate: '',
         repeatOn: false,
         freq: 'workdays',
         weekdays: [],
@@ -1706,7 +1655,7 @@ const CSS = `
             title: draft.title,
             projectId: draft.projectId || null,
             priority: draft.priority,
-              plannedDate: draft.plannedDate,
+            dueDate: draft.dueDate || null,
             repeat,
           })
           .then((result) => {
@@ -1751,12 +1700,12 @@ const CSS = `
         ),
         h(
           Field,
-          { label: '计划日期' },
+          { label: '截止日期' },
           h('input', {
             className: 'aw-input',
             type: 'date',
-            value: draft.plannedDate,
-            onChange: (event) => set({ plannedDate: event.target.value }),
+            value: draft.dueDate,
+            onChange: (event) => set({ dueDate: event.target.value }),
           }),
         ),
         h(

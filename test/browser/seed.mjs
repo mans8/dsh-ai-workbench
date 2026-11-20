@@ -18,19 +18,18 @@ async function post(body) {
   return data.result;
 }
 
-// 先在 10-11 建账，再拨到 10-12 —— 这样自动带入、逾期、积压都是真实算出来的
+// 先在 10-11 建账，再拨到 10-12 —— 这样未完成待办留在今日列表、逾期也是真实算出来的
 const EARLY = '2026-10-11';
 const TODAY = '2026-10-12';
 
 await post({ action: 'project_create', name: '订单中台', code: 'OMS', emoji: '📦', owner: '我', today: EARLY });
 await post({ action: 'project_create', name: '对账系统', code: 'REC', emoji: '🧾', today: EARLY });
-await post({ action: 'todo_create', title: '订单导出接口重构', project: '订单中台', plannedDate: '2026-10-05', priority: 'P1', tags: ['重构'], today: EARLY });
-await post({ action: 'todo_create', title: '支付回调幂等性改造', project: '订单中台', plannedDate: '2026-10-06', priority: 'P0', today: EARLY });
-await post({ action: 'todo_create', title: '对账系统灰度方案设计', project: '对账系统', plannedDate: '2026-10-07', dueDate: '2026-10-09', progress: 30, today: EARLY });
-await post({ action: 'todo_create', title: '整理接口文档', plannedDate: TODAY, progress: 40, today: EARLY });
-await post({ action: 'todo_create', title: '背单词', plannedDate: '2026-10-10', today: EARLY });
-await post({ action: 'todo_reschedule', task: '背单词', toBacklog: true, today: EARLY });
-await post({ action: 'todo_create', title: '与产品对齐导出字段', plannedDate: TODAY, today: EARLY });
+await post({ action: 'todo_create', title: '订单导出接口重构', project: '订单中台', priority: 'P1', tags: ['重构'], today: EARLY });
+await post({ action: 'todo_create', title: '支付回调幂等性改造', project: '订单中台', priority: 'P0', today: EARLY });
+await post({ action: 'todo_create', title: '对账系统灰度方案设计', project: '对账系统', dueDate: '2026-10-09', progress: 30, today: EARLY });
+await post({ action: 'todo_create', title: '整理接口文档', progress: 40, today: EARLY });
+await post({ action: 'todo_create', title: '背单词', today: EARLY });
+await post({ action: 'todo_create', title: '与产品对齐导出字段', today: EARLY });
 
 // 完成待办：这里只写流水
 await post({ action: 'todo_complete', task: '订单导出接口重构', date: '2026-10-05', note: 'QPS 从 120 提到 900', today: EARLY });
@@ -48,6 +47,6 @@ await post({ action: 'report_create', type: 'monthly', date: '2026-10-05', today
 
 const view = await (await fetch(`${API}?view=today&today=${TODAY}`)).json();
 console.log(
-  `已灌入示例数据：今日待办 ${view.view.todos.length} 项 · 积压 ${view.view.backlog.length} 项 · 逾期 ${view.view.stats.overdueCount} 项`,
+  `已灌入示例数据：今日待办 ${view.view.todos.length} 项 · 逾期 ${view.view.stats.overdueCount} 项`,
 );
 console.log(`本周完成 ${view.view.weekDone.length} 项（${view.view.week.from} ~ ${view.view.week.to}）`);
