@@ -1068,53 +1068,29 @@ const CSS = `
 
     /* ================= 图标 ================= */
 
-    function ShuIcon(props) {
-      const active = props.active === true;
-      const color = 'currentColor';
+    // 品牌 logo：机器人账房。固定品牌色，不受宿主 currentColor 影响。
+    function ShuIcon() {
       return h(
         'svg',
         { width: 26, height: 26, viewBox: '0 0 32 32', 'aria-hidden': true, fill: 'none' },
-        h('rect', {
-          x: 2, y: 2, width: 28, height: 28, rx: 8,
-          fill: color,
-          fillOpacity: active ? 0.2 : 0.12,
-          stroke: color,
-          strokeWidth: 1.9,
-        }),
+        h('circle', { cx: 16, cy: 3, r: 1.6, fill: '#C9A227' }),
+        h('path', { d: 'M16 5v2', stroke: '#3B5BDB', strokeWidth: 1.6, strokeLinecap: 'round' }),
+        h('rect', { x: 6, y: 7, width: 20, height: 13, rx: 4, fill: '#3B5BDB' }),
+        h('circle', { cx: 12, cy: 12.5, r: 2.1, fill: '#FFFFFF' }),
+        h('circle', { cx: 20, cy: 12.5, r: 2.1, fill: '#FFFFFF' }),
         h('path', {
-          d: 'M11 8v16',
-          stroke: color,
-          strokeWidth: 1.2,
-          strokeOpacity: 0.45,
-        }),
-        h('path', {
-          d: 'm14.5 12 1.6 1.7 2.8-3',
+          d: 'M13 16.5l2 2 4-4',
           fill: 'none',
-          stroke: color,
-          strokeWidth: 1.7,
+          stroke: '#7FE3C4',
+          strokeWidth: 1.8,
           strokeLinecap: 'round',
           strokeLinejoin: 'round',
         }),
         h('path', {
-          d: 'M21.8 12h1.9',
-          stroke: color,
-          strokeWidth: 1.3,
-          strokeOpacity: 0.7,
-          strokeLinecap: 'round',
-        }),
-        h('path', {
-          d: 'm14.5 19 1.6 1.7 2.8-3',
-          fill: 'none',
-          stroke: color,
-          strokeWidth: 1.7,
-          strokeLinecap: 'round',
-          strokeLinejoin: 'round',
-        }),
-        h('path', {
-          d: 'M21.8 19h1.9',
-          stroke: color,
-          strokeWidth: 1.3,
-          strokeOpacity: 0.7,
+          d: 'M9 24h14M9 27.5h9',
+          stroke: '#3B5BDB',
+          strokeWidth: 1.6,
+          strokeOpacity: 0.55,
           strokeLinecap: 'round',
         }),
       );
