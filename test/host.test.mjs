@@ -1548,6 +1548,113 @@ group('17. 项目建好之后可以改');
 }
 
 /* ------------------------------------------------------------------ *
+ * 18. 四象限看板
+ * ------------------------------------------------------------------ */
+
+group('18. 四象限看板：优先级语义、象限排序与分类口径');
+{
+  const Q = await harness('board');
+  await Q.ok({ action: 'project_create', name: '工作项目', category: 'work' });
+  await Q.ok({ action: 'project_create', name: '个人项目', category: 'personal' });
+
+  const plain = await Q.ok({ action: 'todo_create', title: '默认优先级待办' });
+  check('新建待办的默认优先级是「重要不紧急」P1', () => {
+    assert.equal(plain.data.todo.priority, 'P1');
+  });
+
+  const other = await Q.ok({ action: 'todo_create', title: '无项目待办' });
+  const work = await Q.ok({ action: 'todo_create', title: '工作待办', project: '工作项目', priority: 'P0' });
+  const personal = await Q.ok({ action: 'todo_create', title: '个人待办', project: '个人项目', priority: 'P0' });
+
+  check('新待办带 order：同一象限追加到末尾', () => {
+    const state = Q.readState();
+    const p1 = state.todos.filter((todo) => todo.priority === 'P1').sort((a, b) => a.order - b.order);
+    assert.deepEqual(p1.map((todo) => todo.id), [plain.data.id, other.data.id]);
+    assert.ok(p1[1].order > p1[0].order, '后建的应当排在后面');
+    const p0 = state.todos.filter((todo) => todo.priority === 'P0').sort((a, b) => a.order - b.order);
+    assert.deepEqual(p0.map((todo) => todo.id), [work.data.id, personal.data.id]);
+  });
+
+  await checkAsync('看板视图固定四象限，象限内按 order 排', async () => {
+    const { view } = await Q.get('board');
+    assert.deepEqual(view.quadrants.map((q) => q.priority), ['P0', 'P1', 'P2', 'P3']);
+    assert.equal(view.category, 'all');
+    assert.deepEqual(view.quadrants[0].todos.map((t) => t.title), ['工作待办', '个人待办']);
+    assert.equal(view.quadrants[0].count, 2);
+    assert.deepEqual(view.quadrants[1].todos.map((t) => t.title), ['默认优先级待办', '无项目待办']);
+    assert.equal(view.quadrants[2].count, 0);
+    assert.equal(view.total, 4);
+  });
+
+  await checkAsync('跨象限移动：todo_move 同时改优先级并落到目标位置', async () => {
+    const moved = await Q.ok({ action: 'todo_move', id: other.data.id, priority: 'P0', index: 1 });
+    assert.match(moved.message, /重要且紧急/, '提示要说清楚移到哪个象限');
+    const { view } = await Q.get('board');
+    assert.deepEqual(view.quadrants[0].todos.map((t) => t.title), ['工作待办', '无项目待办', '个人待办']);
+    assert.equal(Q.readState().todos.find((item) => item.id === other.data.id).priority, 'P0');
+  });
+
+  await checkAsync('同象限调序：index 就是目标位置（0 基）', async () => {
+    await Q.ok({ action: 'todo_move', id: personal.data.id, index: 0 });
+    const { view } = await Q.get('board');
+    assert.deepEqual(view.quadrants[0].todos.map((t) => t.title), ['个人待办', '工作待办', '无项目待办']);
+  });
+
+  await checkAsync('非法优先级与已完成的待办都会被拒绝移动', async () => {
+    const bad = await Q.post({ action: 'todo_move', id: work.data.id, priority: 'P9' });
+    assert.equal(bad.json.result.ok, false);
+    assert.match(bad.json.result.error, /P0~P3/);
+    await Q.ok({ action: 'todo_complete', id: work.data.id });
+    const done = await Q.post({ action: 'todo_move', id: work.data.id, priority: 'P3' });
+    assert.equal(done.json.result.ok, false);
+  });
+
+  await checkAsync('分类口径：未归类算工作，仅个人时排除', async () => {
+    const titles = (view) => view.quadrants.flatMap((q) => q.todos.map((t) => t.title)).sort();
+    const personalScope = (await Q.get('board', { category: 'personal' })).view;
+    assert.deepEqual(titles(personalScope), ['个人待办']);
+    assert.equal(personalScope.total, 1);
+    const workScope = (await Q.get('board', { category: 'work' })).view;
+    assert.deepEqual(titles(workScope), ['无项目待办', '默认优先级待办']);
+  });
+
+  await checkAsync('分类口径存进设置，并成为看板的默认口径', async () => {
+    assert.equal((await Q.get('bootstrap')).view.settings.boardCategory, 'all');
+    await Q.ok({ action: 'settings_update', settings: { boardCategory: 'personal' } });
+    assert.equal((await Q.get('bootstrap')).view.settings.boardCategory, 'personal');
+    const board = (await Q.get('board')).view;
+    assert.equal(board.category, 'personal', '不传 category 时应当用上次记住的口径');
+    const bad = await Q.post({ action: 'settings_update', settings: { boardCategory: 'others' } });
+    assert.equal(bad.json.result.ok, false);
+  });
+
+  await checkAsync('重复任务模板本身不上板，实例上板', async () => {
+    await Q.ok({ action: 'todo_create', title: '每日站会', repeat: { freq: 'workdays' }, priority: 'P1' });
+    const { view } = await Q.get('board', { category: 'all' });
+    const rows = view.quadrants.flatMap((q) => q.todos);
+    assert.ok(rows.every((todo) => !todo.isTemplate), '模板自己被列进看板了');
+    assert.ok(rows.some((todo) => todo.title === '每日站会'), '今天开出来的实例应当上板');
+  });
+}
+
+{
+  const L1 = await harness('board-legacy');
+  await L1.ok({ action: 'todo_create', title: '甲', priority: 'P2' });
+  await L1.ok({ action: 'todo_create', title: '乙', priority: 'P2' });
+  const raw = JSON.parse(readFileSync(L1.stateFile, 'utf8'));
+  for (const todo of raw.todos) delete todo.order;
+  writeFileSync(L1.stateFile, JSON.stringify(raw));
+
+  const L2 = await harness('board-legacy');
+  await checkAsync('老数据没有 order：按创建顺序补齐', async () => {
+    const { view } = await L2.get('board');
+    const p2 = view.quadrants[2];
+    assert.deepEqual(p2.todos.map((t) => t.title), ['甲', '乙']);
+    assert.ok(p2.todos.every((todo) => typeof todo.order === 'number'));
+  });
+}
+
+/* ------------------------------------------------------------------ *
  * 汇总
  * ------------------------------------------------------------------ */
 

@@ -374,6 +374,7 @@ async function collectViews() {
   for (const [key, view, params] of [
     ['bootstrap', 'bootstrap', {}],
     ['today', 'today', {}],
+    ['board', 'board', {}],
     ['todos', 'todos', { status: 'all' }],
     ['projects', 'projects', {}],
     ['stats', 'stats', { dim: 'month', from: '2026-01-01', to: '2026-12-31' }],
@@ -562,8 +563,8 @@ function fakeApi(viewName, view) {
       calls.push(['reload']);
       return Promise.resolve();
     },
-    send: (action, payload) => {
-      calls.push(['send', action, payload]);
+    send: (action, payload, options) => {
+      calls.push(['send', action, payload, options]);
       return Promise.resolve({ ok: true, data: { id: 'x' } });
     },
     refreshBoot: () => {
@@ -578,6 +579,7 @@ function fakeApi(viewName, view) {
 function renderPage(tab, extraPresets = {}, viewOverride) {
   const viewMap = {
     today: views.today,
+    board: views.board,
     projects: views.projects,
     reports: views.reports,
     stats: views.stats,
@@ -589,10 +591,11 @@ function renderPage(tab, extraPresets = {}, viewOverride) {
   return { tree, text: textOf(tree), api, effectErrors };
 }
 
-group('2. 四个分页都能无异常渲染');
+group('2. 五个分页都能无异常渲染');
 {
   const expectations = {
     today: ['AI 工作台账', '今日待办', '整理接口文档', '每日站会', '新增', '本周完成', '完成'],
+    board: ['看板', '重要且紧急', '立即做', '排期做', '委派或批量处理', '删除或归档', '仅个人'],
     projects: ['订单中台', '对账系统', '新增项目', '完成'],
     reports: ['生成简报', '周报', '简报库', '已归档'],
     stats: ['汇总', '完成率', '完成数分布'],
@@ -1288,10 +1291,13 @@ group('3c. 优先级 P0~P3 的含义必须写在界面上');
   check('新增弹层里的优先级下拉带含义，而不是光秃秃的 P0/P1/P2/P3', () => {
     // TodayTab 的 hook：0 showAllHistory / 1 editing / 2 adding / 3 dirty / 4 confirmClose
     const { text } = renderPage('today', { TodayTab: { 2: true } });
-    for (const label of ['P0 · 紧急', 'P1 · 高', 'P2 · 中', 'P3 · 低']) {
+    for (const label of ['P0 · 重要且紧急', 'P1 · 重要不紧急', 'P2 · 紧急不重要', 'P3 · 不重要不紧急']) {
       assert.ok(text.includes(label), `下拉里缺少「${label}」`);
     }
-    assert.ok(text.includes('优先级：P0 紧急 · P1 高 · P2 中 · P3 低'), '缺少图例');
+    assert.ok(
+      text.includes('优先级：P0 重要且紧急 · P1 重要不紧急 · P2 紧急不重要 · P3 不重要不紧急'),
+      '缺少图例',
+    );
   });
 
   check('待办行的优先级徽标带悬浮说明', () => {
@@ -1304,7 +1310,11 @@ group('3c. 优先级 P0~P3 的含义必须写在界面上');
     })(tree);
     assert.ok(badges.length > 0, '一个优先级徽标都没有');
     assert.ok(
-      badges.every((badge) => typeof badge.title === 'string' && /^P[0-3] (紧急|高|中|低)/.test(badge.title)),
+      badges.every(
+        (badge) =>
+          typeof badge.title === 'string' &&
+          /^P[0-3] (重要且紧急|重要不紧急|紧急不重要|不重要不紧急)/.test(badge.title),
+      ),
       `徽标缺少含义提示：${JSON.stringify(badges.map((b) => b.title))}`,
     );
   });
@@ -1318,6 +1328,260 @@ group('3c. 优先级 P0~P3 的含义必须写在界面上');
       for (const child of node.children || []) walk(child);
     })(tree);
     assert.ok(labelCount > 0, '徽标里没有简称');
+  });
+}
+
+group('3j. 看板页：四象限、卡片与分类口径');
+{
+  const QUADRANTS = [
+    ['P0', '重要且紧急', '立即做'],
+    ['P1', '重要不紧急', '排期做'],
+    ['P2', '紧急不重要', '委派或批量处理'],
+    ['P3', '不重要不紧急', '删除或归档'],
+  ];
+
+  const cls = (node) => String(node?.props?.className || '');
+  function collect(tree, predicate) {
+    const out = [];
+    (function walk(node) {
+      if (!node) return;
+      if (predicate(node)) out.push(node);
+      for (const child of node.children || []) walk(child);
+    })(tree);
+    return out;
+  }
+  const quadrantsOf = (tree) => collect(tree, (n) => n.type === 'section' && /(^| )aw-q( |$)/.test(cls(n)));
+  const cardsOf = (tree) => collect(tree, (n) => cls(n).split(' ')[0] === 'aw-kcard');
+  const quadrantOf = (tree, priority) => findNode(tree, (n) => n.type === 'section' && n.props && n.props['data-q'] === priority);
+
+  check('四个象限按 P0~P3 排布：标题 + 副标题 + 计数都来自视图', () => {
+    const { tree, effectErrors } = renderPage('board');
+    assert.equal(effectErrors.length, 0, `渲染副作用抛错：${effectErrors.map((e) => e.message).join('; ')}`);
+    const quadrants = quadrantsOf(tree);
+    assert.equal(quadrants.length, 4, '看板应当正好四个象限');
+    quadrants.forEach((node, index) => {
+      const [priority, title, sub] = QUADRANTS[index];
+      assert.equal(node.props['data-q'], priority, `第 ${index + 1} 个象限应当是 ${priority}`);
+      assert.equal(textOf(findNode(node, (n) => cls(n) === 'aw-q-title')), title, `${priority} 的标题不对`);
+      assert.equal(textOf(findNode(node, (n) => cls(n) === 'aw-q-sub')), sub, `${priority} 的副标题不对`);
+      const badge = findNode(node, (n) => cls(n) === 'aw-q-badge');
+      assert.ok(badge, `${priority} 缺少计数`);
+      assert.equal(textOf(badge), `${views.board.quadrants[index].count} 项`);
+    });
+    assert.ok(views.board.quadrants[1].count > 0, '前置条件：P1 象限应当有卡片');
+  });
+
+  check('卡片只露标题与截止日（没有优先级、象限名、进度）', () => {
+    const { tree } = renderPage('board');
+    const cards = cardsOf(tree);
+    assert.equal(cards.length, views.board.total, `卡片数应当等于视图里的未完成总数（${views.board.total}）`);
+    const all = cards.map(textOf).join('|');
+    assert.ok(all.includes('对账系统灰度方案设计'), 'P1 的卡片没渲染出来');
+    assert.ok(all.includes('2026-10-09 截止'), '有截止日的卡片要显示日期');
+    assert.ok(all.includes('暂无截止'), '没有截止日的卡片要有兜底文案');
+    for (const card of cards) {
+      const text = textOf(card);
+      assert.ok(!/P[0-3]/.test(text), `卡片上不该出现优先级代码：${text}`);
+      assert.ok(!text.includes('重要且紧急') && !text.includes('排期做'), `卡片上不该出现象限名：${text}`);
+      assert.ok(!/%/.test(text), `卡片上不该出现完成度：${text}`);
+    }
+    assert.equal(collect(tree, (n) => /^aw-prio( |$)/.test(cls(n))).length, 0, '看板不用今日页的优先级徽标');
+  });
+
+  check('逾期卡片的截止日用轻红，未逾期的保持中性', () => {
+    const { tree } = renderPage('board');
+    const overdue = cardsOf(tree).find((card) => textOf(card).includes('2026-10-09 截止'));
+    assert.ok(overdue, '前置条件：应当有一条 10-09 截止的卡片');
+    const due = findNode(overdue, (n) => cls(n).startsWith('aw-kcard-due'));
+    assert.match(cls(due), /is-overdue/, '逾期的截止日要有警示色');
+    const none = cardsOf(tree).find((card) => textOf(card).includes('暂无截止'));
+    assert.ok(none, '前置条件：应当有一条没有截止日的卡片');
+    assert.doesNotMatch(cls(findNode(none, (n) => cls(n).startsWith('aw-kcard-due'))), /is-overdue/);
+  });
+
+  check('每个象限都有「+」，点开就是该象限的新建弹层', () => {
+    const api = fakeApi('board', views.board);
+    react.presets({ WorkPage: { 2: 'board' } });
+    const element = react.createElement(slots.main.component, { api });
+    let tree = react.render(element).tree;
+    const add = findNode(tree, (n) => n.type === 'button' && n.props?.['aria-label'] === '在「紧急不重要」新建');
+    assert.ok(add, '象限标题栏缺少「+」');
+    add.props.onClick();
+    tree = react.render(element).tree;
+    const modal = findNode(tree, (n) => cls(n) === 'aw-modal');
+    assert.ok(modal, '点「+」没有打开新建弹层');
+    assert.equal(textOf(findNode(modal, (n) => n.type === 'h3')).trim(), '新建待办', '弹窗标题只写「新建待办」，不带象限名');
+    const locked = findNode(modal, (n) => n.type === 'select' && n.props?.value === 'P2');
+    assert.ok(locked, '新建弹层里应当能看到落到哪个优先级');
+    assert.equal(locked.props.disabled, true, '从象限「+」进来，优先级应锁定为 P2 不可改');
+    const title = findNode(modal, (n) => n.type === 'input' && n.props?.placeholder === '待办标题');
+    assert.ok(title, '弹层里缺少标题输入');
+    title.props.onChange({ target: { value: '催对账数据' } });
+    tree = react.render(element).tree;
+    const ready = findNode(tree, (n) => cls(n) === 'aw-modal');
+    const submit = findNode(ready, (n) => n.type === 'button' && textOf(n).trim() === '新建');
+    assert.ok(submit, '弹层里缺少「新建」按钮');
+    submit.props.onClick();
+    const creates = api.calls.filter((call) => call[0] === 'send' && call[1] === 'todo_create');
+    assert.equal(creates.length, 1, `应当只发一次 todo_create：${JSON.stringify(api.calls)}`);
+    assert.equal(creates[0][2].priority, 'P2', '从「紧急不重要」的 + 进来，默认就是 P2');
+  });
+
+  check('切换「仅个人」：一次请求同时记住设置并刷新看板', () => {
+    const { tree, api } = renderPage('board');
+    const personal = findNode(tree, (n) => n.type === 'button' && textOf(n).trim() === '仅个人');
+    assert.ok(personal, '看板右上角缺少分类切换');
+    personal.props.onClick();
+    const updates = api.calls.filter((call) => call[0] === 'send' && call[1] === 'settings_update');
+    assert.equal(updates.length, 1, `应当只发一次 settings_update：${JSON.stringify(api.calls)}`);
+    assert.deepEqual(updates[0][2], {
+      settings: { boardCategory: 'personal' },
+      view: 'board',
+      viewParams: { category: 'personal' },
+    });
+    assert.equal(updates[0][3] && updates[0][3].silent, true, '切口径不该再弹一条全局提示');
+    const seg = findNode(tree, (n) => cls(n) === 'aw-kb-scope');
+    assert.ok(seg, '分类切换应当是分段按钮');
+    assert.deepEqual(
+      (seg.children || []).filter((n) => n.type === 'button').map((n) => textOf(n).trim()),
+      ['全部', '仅工作', '仅个人'],
+    );
+    const on = findNode(seg, (n) => cls(n).includes('is-on'));
+    assert.equal(textOf(on).trim(), '全部', '默认口径是全部');
+  });
+
+  check('打开插件默认落在看板，而不是今日', () => {
+    react.presets({});
+    const api = fakeApi('board', views.board);
+    const { tree } = react.render(react.createElement(slots.main.component, { api }));
+    const on = findNode(tree, (n) => n.type === 'button' && cls(n).includes('aw-tab') && cls(n).includes('is-on'));
+    assert.ok(on, '找不到当前分页');
+    assert.equal(textOf(on).trim(), '看板', '默认分页应当是看板');
+    assert.ok(findNode(tree, (n) => cls(n) === 'aw-kb'), '默认应当直接渲染看板页');
+    const opens = api.calls.filter((call) => call[0] === 'open' && call[1] === 'board');
+    assert.equal(opens.length, 1, `默认进看板应当拉一次 board 视图：${JSON.stringify(api.calls)}`);
+  });
+
+  check('看板分页按记住的分类口径拉数据', () => {
+    const { api } = renderPage('board');
+    const opens = api.calls.filter((call) => call[0] === 'open' && call[1] === 'board');
+    assert.equal(opens.length, 1, `进入看板应当只拉一次 board 视图：${JSON.stringify(api.calls)}`);
+    assert.deepEqual(opens[0][2], { category: 'all' }, '要按记住的分类口径拉');
+  });
+
+  check('拖拽中：目标象限虚线高亮 + 落点提示，源卡片跟着指针走', () => {
+    const dragged = views.board.quadrants[1].todos[0];
+    const { tree } = renderPage('board', {
+      BoardTab: {
+        1: {
+          id: dragged.id,
+          title: dragged.title,
+          fromPriority: 'P1',
+          fromIndex: 0,
+          x: 120,
+          y: 240,
+          grabX: 90,
+          grabY: 14,
+          width: 320,
+          target: { priority: 'P0', index: 0 },
+        },
+      },
+    });
+    const p0 = quadrantOf(tree, 'P0');
+    assert.match(cls(p0), /is-over/, '拖入的象限要有高亮');
+    assert.ok(textOf(p0).includes('松开鼠标，放到这里'), '目标象限要有落点提示');
+    const p1 = quadrantOf(tree, 'P1');
+    assert.ok(!textOf(p1).includes(dragged.title), '拖动中的卡片应当离开原位');
+    assert.ok(textOf(tree).includes(dragged.title), '拖动中的卡片要跟着指针（ghost）');
+    const ghost = findNode(tree, (n) => /^aw-kb-ghost( |$)/.test(cls(n)));
+    assert.ok(ghost, '缺少拖拽中的浮层');
+    // 浮卡必须保持「按下时抓住的那个位置」在指针下：不是固定偏移，也不能跳
+    assert.equal(Number(ghost.props.style.left), 120 - 90, `浮卡横向偏离指针：${ghost.props.style.left}`);
+    assert.equal(Number(ghost.props.style.top), 240 - 14, `浮卡纵向偏离指针：${ghost.props.style.top}`);
+  });
+
+  check('单击只是选中：卡片上不冒出完成 / 编辑 / 删除按钮', () => {
+    const target = views.board.quadrants[1].todos[0];
+    const { tree } = renderPage('board', { BoardTab: { 0: target.id } });
+    const card = cardsOf(tree).find((n) => n.props && n.props['data-card-id'] === target.id);
+    assert.ok(card, '找不到被选中的卡片');
+    assert.match(cls(card), /is-sel/, '选中要有视觉反馈');
+    assert.equal(collect(card, (n) => n.type === 'button').length, 0, '卡片里不该再冒出按钮');
+    assert.ok(!textOf(card).includes('编辑') && !textOf(card).includes('删除'), '卡片文案不该出现编辑 / 删除');
+  });
+
+  check('单击空白处取消选中', () => {
+    const target = views.board.quadrants[1].todos[0];
+    const api = fakeApi('board', views.board);
+    react.presets({ WorkPage: { 2: 'board' }, BoardTab: { 0: target.id } });
+    const element = react.createElement(slots.main.component, { api });
+    let tree = react.render(element).tree;
+    assert.equal(collect(tree, (n) => n.props && n.props['data-card-id'] === target.id && cls(n).includes('is-sel')).length, 1, '前置条件：卡片已选中');
+    const root = findNode(tree, (n) => cls(n) === 'aw-kb');
+    assert.ok(root && typeof root.props.onPointerDown === 'function', '看板根节点要能响应空白处按下');
+    root.props.onPointerDown({ target: { closest: () => null } });
+    tree = react.render(element).tree;
+    assert.equal(collect(tree, (n) => cls(n).includes('is-sel')).length, 0, '点空白处应当取消选中');
+  });
+
+  check('落定提示带「撤销」，撤销走 todo_move', () => {
+    const { tree, api } = renderPage('board', {
+      BoardTab: { 3: { text: '已移至【重要且紧急】', undo: { id: 'todo-x', priority: 'P1', index: 0 } } },
+    });
+    assert.ok(textOf(tree).includes('已移至【重要且紧急】'), '移动后要有轻微提示');
+    const undo = findNode(tree, (n) => n.type === 'button' && textOf(n).trim() === '撤销');
+    assert.ok(undo, '提示里要有「撤销」兜底');
+    undo.props.onClick();
+    const moves = api.calls.filter((call) => call[0] === 'send' && call[1] === 'todo_move');
+    assert.equal(moves.length, 1, `撤销应当发一次 todo_move：${JSON.stringify(api.calls)}`);
+    assert.deepEqual(moves[0][2], { id: 'todo-x', priority: 'P1', index: 0 });
+    assert.equal(moves[0][3] && moves[0][3].silent, true, '撤销不该再弹一条全局提示');
+  });
+
+  check('看板 CSS：2×2 网格、虚线闪烁、克制但活泼的动画', () => {
+    const css = cssOf(renderPage('board').tree) || '';
+    for (const rule of [
+      '.aw-kb-grid{',
+      '.aw-q{',
+      '.aw-q.is-over::after{',
+      '.aw-q-drop{',
+      '.aw-kcard{',
+      '.aw-kcard.is-landed{',
+      '.aw-kb-toast{',
+      '.aw-kb-ghost{',
+    ]) {
+      assert.ok(css.includes(rule), `缺少 ${rule} —— 看板会丢功能`);
+    }
+    const grid = (css.match(/^\.aw-kb-grid\{[^}]*\}/m) || [])[0];
+    assert.match(grid, /grid-template-columns:1fr 1fr/, `看板是 2×2：${grid}`);
+    assert.match(grid, /grid-template-rows:1fr 1fr/, grid);
+    const over = (css.match(/^\.aw-q\.is-over::after\{[^}]*\}/m) || [])[0];
+    assert.match(over, /dashed/, '拖入提示要用虚线');
+    assert.match(over, /animation:awPulse/, '虚线要闪，用户才知道可以松手');
+    assert.match(css, /@keyframes awPulse\{/, '缺少闪烁动画');
+    assert.match(css, /^\.aw-kcard\.is-landed\{[^}]*animation:awLand/m, '松手要有轻微反馈');
+    for (const token of ['--q0:', '--q1:', '--q2:', '--q3:']) {
+      assert.ok(css.includes(token), `皮肤里缺少 ${token}（四象限配色）`);
+    }
+    assert.match(css, /@media \(prefers-reduced-motion: reduce\)\{\.aw-kcard,/, '减弱动效时应当关掉动画');
+    // 卡片高度照参考稿 38px，象限内滚动而不是把页面撑长
+    assert.match(css, /^\.aw-kcard\{[^}]*height:38px/m, '卡片高度应当与参考稿一致');
+    assert.match(css, /^\.aw-q-list\{[^}]*overflow-y:auto/m, '象限内应当自己滚动');
+  });
+
+  check('左栏「看板」在「今日」上方，图标是四宫格', () => {
+    const { tree } = renderPage('today');
+    const nav = findNode(tree, (n) => n.type === 'nav' && cls(n) === 'aw-tabs');
+    assert.ok(nav, '找不到左栏导航');
+    const buttons = (nav.children || []).filter((n) => n.type === 'button');
+    assert.deepEqual(
+      buttons.map((n) => textOf(n).trim()),
+      ['看板', '今日', '项目', '简报', '统计'],
+      '「看板」应当是「今日」上面的一级分页',
+    );
+    const boardTab = buttons[0];
+    const pathCount = collect(findNode(boardTab, (n) => n.type === 'svg'), (n) => n.type === 'path').length;
+    assert.equal(pathCount, 4, '看板图标是四宫格');
   });
 }
 
@@ -1873,7 +2137,7 @@ group('3g2. 分页条永远看得见');
     assert.match(narrow, /\.aw-tabs\{flex-direction:row/, '窄屏分页应当横排');
   });
 
-  check('四个分页一个不少，顺序固定', () => {
+  check('五个分页一个不少，顺序固定', () => {
     const { tree } = renderPage('today');
     const labels = [];
     (function walk(node) {
@@ -1881,7 +2145,7 @@ group('3g2. 分页条永远看得见');
       if (node.type === 'button' && /aw-tab( |$)/.test(String(node.props?.className || ''))) labels.push(textOf(node).trim());
       for (const child of node.children || []) walk(child);
     })(tree);
-    assert.deepEqual(labels, ['今日', '项目', '简报', '统计']);
+    assert.deepEqual(labels, ['看板', '今日', '项目', '简报', '统计']);
   });
 }
 

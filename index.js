@@ -17,7 +17,7 @@
  * 数据落在 ~/ai-workbench/state.json，原子写入。
  */
 import { applyAction } from './lib/actions.js';
-import { bootstrapView, projectsView, reportView, reportsView, statsView, todayView, todosView } from './lib/domain.js';
+import { boardView, bootstrapView, projectsView, reportView, reportsView, statsView, todayView, todosView } from './lib/domain.js';
 import { readState, rolloverThrough, writeState } from './lib/state.js';
 import { reportTool, todoTool } from './lib/tools.js';
 import { dayKeyOf, isKey, normalizeKey } from './lib/util.js';
@@ -107,6 +107,9 @@ export function apply(ctx, config) {
         return bootstrapView(state, today);
       case 'today':
         return todayView(state, date);
+      case 'board':
+        // 分类口径优先看参数；没给就用上次记住的设置。
+        return boardView(state, { today: date, category: p('category') || state.settings.boardCategory });
       case 'todos':
         return todosView(state, {
           today: date,

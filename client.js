@@ -31,22 +31,22 @@ window.__ModuleLoader__.load({
     const PRIORITIES = ['P0', 'P1', 'P2', 'P3'];
 
     /**
-     * 优先级含义。
-     * 这套定义同时用在：新建待办的下拉选项、行内徽标的悬浮说明、表单一行的图例，
-     * 以及 workbench_todo 工具的描述里 —— 只有这一处权威定义。
+     * 优先级 = 四象限。
+     * 这套定义同时用在：新建待办的下拉选项、行内徽标的悬浮说明、表单一行的图例、
+     * 看板的象限标题与副标题，以及 workbench_todo 工具的描述里 —— 只有这一处权威定义。
      */
     const PRIORITY_INFO = {
-      P0: { short: '紧急', full: 'P0 紧急 —— 立刻做：线上故障、阻塞别人的事、当天必须交付' },
-      P1: { short: '高', full: 'P1 高 —— 尽快做：本周内要交付，或别人在等你的产出' },
-      P2: { short: '中', full: 'P2 中 —— 正常排期（默认）：按计划推进即可' },
-      P3: { short: '低', full: 'P3 低 —— 有空再做：想做的优化、可延期的杂事' },
+      P0: { short: '重要且紧急', action: '立即做', full: 'P0 重要且紧急 —— 立即做：线上故障、阻塞别人的事、当天必须交付' },
+      P1: { short: '重要不紧急', action: '排期做', full: 'P1 重要不紧急 —— 排期做：本周内要交付，或别人在等你的产出' },
+      P2: { short: '紧急不重要', action: '委派或批量处理', full: 'P2 紧急不重要 —— 委派或批量处理：能交出去，或攒一批一起做' },
+      P3: { short: '不重要不紧急', action: '删除或归档', full: 'P3 不重要不紧急 —— 删除或归档：想做但不做的优化、可清理的杂事' },
     };
 
     /** 构建标记：设置弹层底部会显示，用来确认 DSH 到底加载了哪一版。 */
-    const BUILD = 'v1.0.3 · 2026-11-20 · A58 生成简报竖排表单';
+    const BUILD = 'v1.0.7 · 2026-11-20 · A62 默认进入看板';
 
     /** 每个分页的页标题（对应参考稿里的「Main Dashboard」）。 */
-    const TAB_TITLE = { today: '今天', projects: '项目', reports: '简报', stats: '统计' };
+    const TAB_TITLE = { board: '看板', today: '今天', projects: '项目', reports: '简报', stats: '统计' };
 
     /** 可切换的皮肤。horizon 是 Pixso 参考稿那套；其余三套之前做过。 */
     const SKINS = [
@@ -142,6 +142,8 @@ const CSS = `
   --accent-soft:oklch(92% 0.045 274); --accent-2:oklch(80% 0.10 230);
   --focus:oklch(46% 0.29 274);
   --danger:oklch(58% 0.20 25); --warn:oklch(70% 0.16 78); --ok:oklch(62% 0.15 165);
+  /* 四象限配色：重要且紧急=红 · 重要不紧急=蓝 · 紧急不重要=黄 · 不重要不紧急=灰 */
+  --q0:oklch(58% 0.20 25); --q1:oklch(55% 0.17 258); --q2:oklch(74% 0.15 82); --q3:oklch(60% 0.012 265);
   --glass:oklch(100% 0 0 / 0.98); --glass-blur:8px;
   --glass-hi:0 0 0 1px oklch(100% 0 0 / 0.6) inset;
   --lit:oklch(100% 0 0 / 0.9);
@@ -157,6 +159,7 @@ const CSS = `
   --accent-soft:oklch(91% 0.032 220); --accent-2:oklch(42% 0.095 220);
   --focus:oklch(46% 0.098 230);
   --danger:oklch(48% 0.18 27); --warn:oklch(48% 0.11 60); --ok:oklch(44% 0.10 165);
+  --q0:oklch(48% 0.18 27); --q1:oklch(46% 0.13 245); --q2:oklch(58% 0.11 70); --q3:oklch(52% 0.015 235);
   --glass:oklch(98.5% 0.006 75 / 0.94); --glass-blur:10px;
   --glass-hi:inset 0 1px 0 oklch(100% 0 0 / 0.8), inset 0 0 0 1px oklch(24% 0.03 240 / 0.05);
   --lit:oklch(100% 0 0 / 0.85);
@@ -174,6 +177,7 @@ const CSS = `
   --accent-soft:oklch(28% 0.045 274); --accent-2:oklch(83% 0.095 62);
   --focus:oklch(84% 0.085 274);
   --danger:oklch(72% 0.15 25); --warn:oklch(83% 0.095 62); --ok:oklch(80% 0.09 160);
+  --q0:oklch(74% 0.16 25); --q1:oklch(74% 0.13 258); --q2:oklch(85% 0.13 82); --q3:oklch(70% 0.015 262);
   --glass:rgba(30,32,42,.80); --glass:oklch(22% 0.018 268 / 0.58); --glass-blur:18px;
   --glass-hi:inset 0 1px 0 rgba(255,255,255,.10), inset 0 0 0 1px rgba(255,255,255,.06);
   --lit:rgba(255,255,255,.14);
@@ -191,6 +195,7 @@ const CSS = `
   --accent-soft:oklch(94% 0.022 175); --accent-2:oklch(52% 0.11 80);
   --focus:oklch(44% 0.09 175);
   --danger:oklch(50% 0.19 27); --warn:oklch(52% 0.11 75); --ok:oklch(46% 0.10 160);
+  --q0:oklch(52% 0.19 27); --q1:oklch(48% 0.14 250); --q2:oklch(62% 0.12 75); --q3:oklch(52% 0.012 200);
   --glass:rgba(255,255,255,.94); --glass:oklch(99.5% 0.003 160 / 0.86); --glass-blur:14px;
   --glass-hi:inset 0 1px 0 rgba(255,255,255,.9), inset 0 0 0 1px rgba(20,30,40,.08);
   --lit:rgba(255,255,255,.9);
@@ -452,6 +457,88 @@ const CSS = `
 .aw-flash.is-roll{border-color:var(--accent)}
 @media (prefers-reduced-motion: reduce){.aw-flash{animation:none}.aw-bar>i,.aw-daybar>i{transition:none}}
 
+/* ── 看板：四象限 ───────────────────────────────────────────── */
+/* 卡片 38px、象限 16px 内边距、2×2 满高；象限内部滚动，页面本身不变长 */
+.aw-kb{flex:1 1 auto;display:flex;flex-direction:column;gap:14px;min-height:0}
+.aw-kb-scope{display:flex;gap:2px;padding:3px;border-radius:999px;background:var(--paper-3)}
+.aw-kb-scope .aw-btn{height:30px;padding:0 16px;border-radius:999px;background:transparent;box-shadow:none;color:var(--ink-2)}
+.aw-kb-scope .aw-btn:hover:not(:disabled){background:color-mix(in srgb,var(--ink) 7%,transparent);color:var(--ink)}
+.aw-kb-scope .aw-btn.is-on,.aw-kb-scope .aw-btn.is-on:hover:not(:disabled){background:var(--accent);color:var(--on-accent)}
+.aw-kb-grid{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:16px}
+.aw-q{position:relative;display:flex;flex-direction:column;gap:12px;min-height:0;padding:16px;border-radius:var(--r-card);
+  background:var(--paper-2);box-shadow:var(--shadow-soft);border:1px dashed transparent;
+  transition:box-shadow 140ms linear}
+.aw-q.is-over{box-shadow:0 14px 34px -20px color-mix(in srgb,var(--accent) 60%,transparent),var(--shadow-soft)}
+.aw-q.is-over::after{content:'';position:absolute;inset:-4px;border-radius:calc(var(--r-card) + 4px);
+  border:2px dashed var(--accent);pointer-events:none;animation:awPulse 1.2s ease-in-out infinite}
+@keyframes awPulse{0%,100%{opacity:.4}50%{opacity:1}}
+.aw-q-head{display:flex;align-items:flex-start;gap:10px}
+.aw-q-dot{flex:0 0 auto;width:10px;height:10px;margin-top:6px;border-radius:999px;background:var(--muted)}
+.aw-q.is-p0 .aw-q-dot{background:var(--q0)}
+.aw-q.is-p1 .aw-q-dot{background:var(--q1)}
+.aw-q.is-p2 .aw-q-dot{background:var(--q2)}
+.aw-q.is-p3 .aw-q-dot{background:var(--q3)}
+.aw-q-text{flex:1 1 auto;min-width:0}
+.aw-q-title{font-size:var(--fs-title);font-weight:600;line-height:1.3;letter-spacing:-.01em;color:var(--ink)}
+.aw-q-sub{font-size:11.5px;color:var(--muted);margin-top:1px}
+.aw-q-badge{flex:0 0 auto;margin-top:2px;padding:2px 9px;border-radius:999px;background:var(--paper-3);
+  font-size:11px;font-weight:600;color:var(--ink-2);white-space:nowrap}
+.aw-q-add{flex:0 0 auto;appearance:none;cursor:pointer;width:26px;height:26px;border:0;border-radius:999px;
+  background:var(--paper-3);color:var(--ink-2);font-size:16px;line-height:1;
+  display:inline-flex;align-items:center;justify-content:center;
+  transition:background 120ms linear,color 120ms linear}
+.aw-q-add:hover{background:var(--accent);color:var(--on-accent)}
+.aw-q-add:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+.aw-q-list{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:1px 2px 1px 0}
+.aw-q-empty{padding:20px 0 0;text-align:center;font-size:12px;color:var(--muted)}
+
+.aw-kcard{position:relative;flex:0 0 auto;display:flex;align-items:center;gap:10px;height:38px;padding:0 12px 0 0;
+  border-radius:8px;background:color-mix(in srgb,var(--paper-3) 52%,var(--paper-2));cursor:grab;user-select:none;touch-action:none;
+  transition:background 120ms linear,box-shadow 140ms linear,transform 180ms cubic-bezier(.2,.7,.2,1)}
+.aw-kcard:hover{background:color-mix(in srgb,var(--accent) 7%,var(--paper-2))}
+.aw-kcard:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+.aw-kcard.is-sel{background:color-mix(in srgb,var(--accent) 6%,var(--paper-2));box-shadow:0 0 0 2px var(--accent)}
+.aw-kcard.is-drag{opacity:.28;cursor:grabbing}
+.aw-kcard.is-landed{animation:awLand 200ms ease-out}
+@keyframes awLand{0%{transform:scale(1.015)}100%{transform:scale(1)}}
+.aw-kcard-bar{flex:0 0 auto;width:3px;height:18px;border-radius:0 3px 3px 0;background:var(--muted)}
+.aw-q.is-p0 .aw-kcard-bar,.aw-kb-ghost.is-p0 .aw-kcard-bar{background:var(--q0)}
+.aw-q.is-p1 .aw-kcard-bar,.aw-kb-ghost.is-p1 .aw-kcard-bar{background:var(--q1)}
+.aw-q.is-p2 .aw-kcard-bar,.aw-kb-ghost.is-p2 .aw-kcard-bar{background:var(--q2)}
+.aw-q.is-p3 .aw-kcard-bar,.aw-kb-ghost.is-p3 .aw-kcard-bar{background:var(--q3)}
+.aw-kcard-title{flex:1 1 auto;min-width:0;font-size:13px;font-weight:500;color:var(--ink);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.aw-kcard-due{flex:0 0 auto;font-size:11px;color:var(--muted);white-space:nowrap}
+.aw-kcard-due.is-overdue{color:var(--danger);font-weight:600}
+.aw-kcard-due.is-none{color:color-mix(in srgb,var(--muted) 62%,var(--paper-2))}
+.aw-kcard-note{flex:0 0 auto;width:4px;height:4px;border-radius:999px;background:var(--muted);opacity:.75}
+.aw-kcard-tip{position:absolute;left:8px;right:8px;top:calc(100% + 6px);z-index:32;padding:8px 10px;border-radius:10px;
+  background:var(--paper-2);border:1px solid var(--rule-2);box-shadow:var(--shadow);color:var(--ink-2);
+  font-size:11.5px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;
+  opacity:0;visibility:hidden;pointer-events:none;transition:opacity 120ms linear 400ms,visibility 0s linear 400ms}
+.aw-kcard:hover .aw-kcard-tip{opacity:1;visibility:visible}
+.aw-q-drop{flex:0 0 auto;height:38px;border-radius:8px;border:1px dashed var(--accent);
+  background:color-mix(in srgb,var(--accent) 7%,transparent);color:var(--accent);
+  font-size:11.5px;font-weight:500;display:flex;align-items:center;justify-content:center}
+.aw-kb-ghost{position:fixed;z-index:80;pointer-events:none;display:flex;align-items:center;gap:10px;height:38px;
+  padding-right:12px;border-radius:8px;overflow:hidden;background:var(--paper-2);transform:rotate(1deg);
+  box-shadow:0 18px 36px -16px color-mix(in srgb,var(--ink) 38%,transparent),0 0 0 1px var(--rule-2)}
+.aw-kb-toast{position:fixed;left:50%;bottom:26px;z-index:82;transform:translateX(-50%);display:flex;align-items:center;gap:10px;
+  height:40px;padding:0 8px 0 14px;border-radius:10px;background:var(--ink);color:var(--paper-2);
+  font-size:12px;box-shadow:var(--shadow);animation:awToastIn 180ms ease-out}
+@keyframes awToastIn{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
+.aw-kb-toast-check{flex:0 0 auto;width:16px;height:16px;border-radius:999px;background:var(--ok);
+  color:var(--paper-2);font-size:10px;line-height:16px;text-align:center}
+.aw-kb-undo{appearance:none;cursor:pointer;border:0;border-radius:6px;font:inherit;font-size:12px;font-weight:600;
+  color:inherit;background:color-mix(in srgb,var(--paper-2) 18%,transparent);height:26px;padding:0 10px}
+.aw-kb-undo:hover{background:color-mix(in srgb,var(--paper-2) 30%,transparent)}
+.aw-kb-undo:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+@media (max-width:900px){
+  .aw-kb-grid{grid-template-columns:1fr;grid-template-rows:none;gap:12px}
+  .aw-q{min-height:170px}
+}
+@media (prefers-reduced-motion: reduce){.aw-kcard,.aw-q.is-over::after,.aw-kb-toast{animation:none;transition:none}}
+
 .aw-backdrop{position:fixed;inset:0;background:var(--scrim);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);z-index:60;
   display:flex;align-items:flex-start;justify-content:center;padding:64px 18px 24px;overflow-y:auto}
 .aw-modal{background:var(--paper-2);border-radius:24px;padding:28px;width:100%;max-width:660px;
@@ -623,7 +710,7 @@ const CSS = `
       }
 
       /** 发一个写操作；响应里带回刷新后的当前视图。 */
-      async function send(action, payload) {
+      async function send(action, payload, options = {}) {
         const seq = ++viewSeq;
         set({ busy: action });
         try {
@@ -641,7 +728,9 @@ const CSS = `
             flash('error', `⚠️ ${(data.result && data.result.error) || '操作失败'}`);
             return { ok: false, error: data.result && data.result.error };
           }
-          if (data.result.message) flash('info', data.result.message);
+          // 拖拽 / 切口径这类高频操作用 silent：界面上已经有自己的反馈（落点提示、分段按钮），
+          // 再弹一条全局提示只会吵。
+          if (data.result.message && !options.silent) flash('info', data.result.message);
           refreshBoot();
           return data.result;
         } catch (error) {
@@ -732,6 +821,7 @@ const CSS = `
 
     /** 左栏导航图标（16px 线性图标）。 */
     const NAV_ICONS = {
+      board: ['M2.8 2.8h4.4v4.4H2.8z', 'M8.8 2.8h4.4v4.4H8.8z', 'M2.8 8.8h4.4v4.4H2.8z', 'M8.8 8.8h4.4v4.4H8.8z'],
       today: ['M3 7.5 8 3l5 4.5', 'M4.5 7v6.5h7V7', 'M6.5 13.5v-3.2h3v3.2'],
       projects: ['M2.8 4.6h4l1.2 1.6h5.2v6.2H2.8z'],
       reports: ['M4 2.8h6l2.2 2.2v8.2H4z', 'M9.6 2.9v2.4h2.4', 'M6 8h4', 'M6 10.4h4'],
@@ -980,29 +1070,51 @@ const CSS = `
 
     function ShuIcon(props) {
       const active = props.active === true;
-      const color = active ? 'currentColor' : 'currentColor';
+      const color = 'currentColor';
       return h(
         'svg',
         { width: 26, height: 26, viewBox: '0 0 32 32', 'aria-hidden': true, fill: 'none' },
-        h('path', {
-          d: 'M16 4.5 26 10.3v11.4L16 27.5 6 21.7V10.3Z',
+        h('rect', {
+          x: 2, y: 2, width: 28, height: 28, rx: 8,
           fill: color,
           fillOpacity: active ? 0.2 : 0.12,
           stroke: color,
           strokeWidth: 1.9,
+        }),
+        h('path', {
+          d: 'M11 8v16',
+          stroke: color,
+          strokeWidth: 1.2,
+          strokeOpacity: 0.45,
+        }),
+        h('path', {
+          d: 'm14.5 12 1.6 1.7 2.8-3',
+          fill: 'none',
+          stroke: color,
+          strokeWidth: 1.7,
+          strokeLinecap: 'round',
           strokeLinejoin: 'round',
         }),
         h('path', {
-          d: 'M16 4.5v6.9M16 11.4 6 10.3M16 11.4l10-1.1M16 11.4v9.3M16 20.7 6 21.7M16 20.7l10 1',
+          d: 'M21.8 12h1.9',
           stroke: color,
-          strokeWidth: 1.2,
-          strokeOpacity: 0.8,
+          strokeWidth: 1.3,
+          strokeOpacity: 0.7,
           strokeLinecap: 'round',
         }),
         h('path', {
-          d: 'M22 25.4c2.3 0 3.6-1.3 3.6-2.9 0-1.5-1.1-2.4-2.4-2.4',
+          d: 'm14.5 19 1.6 1.7 2.8-3',
+          fill: 'none',
           stroke: color,
-          strokeWidth: 1.5,
+          strokeWidth: 1.7,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+        }),
+        h('path', {
+          d: 'M21.8 19h1.9',
+          stroke: color,
+          strokeWidth: 1.3,
+          strokeOpacity: 0.7,
           strokeLinecap: 'round',
         }),
       );
@@ -1493,7 +1605,7 @@ const CSS = `
         title: item.title,
         note: item.note || '',
         projectId: item.projectId || '',
-        priority: item.priority || 'P2',
+        priority: item.priority || 'P1',
         dueDate: item.dueDate || '',
         progress: String(item.progress ?? 0),
       });
@@ -1626,11 +1738,13 @@ const CSS = `
     function TodoCreator(props) {
       const api = props.api;
       const busy = props.busy;
+      // priority 可由上层指定（看板每个象限的「+」直接落到该象限），默认 P1 重要不紧急。
+      const initialPriority = PRIORITIES.includes(props.priority) ? props.priority : 'P1';
       const [draft, setDraft] = React.useState({
         title: '',
         note: '',
         projectId: '',
-        priority: 'P2',
+        priority: initialPriority,
         dueDate: '',
         repeatOn: false,
         freq: 'workdays',
@@ -1712,7 +1826,14 @@ const CSS = `
           { label: '优先级' },
           h(
             'select',
-            { className: 'aw-select', value: draft.priority, title: PRIORITY_TIP, onChange: (event) => set({ priority: event.target.value }) },
+            {
+              className: 'aw-select',
+              value: draft.priority,
+              // 从看板象限的「+」进来时优先级已定死：要改就拖卡片，不在这里改
+              title: props.lockPriority ? '从该象限新建，优先级已固定；想换象限请直接拖动卡片' : PRIORITY_TIP,
+              disabled: !!props.lockPriority,
+              onChange: (event) => set({ priority: event.target.value }),
+            },
             PRIORITIES.map((value) => h('option', { key: value, value }, `${value} · ${PRIORITY_INFO[value].short}`)),
           ),
         ),
@@ -1843,6 +1964,465 @@ const CSS = `
             }, '删除'),
           ),
         ),
+      );
+    }
+
+    /* ================= 看板（四象限） ================= */
+
+    /** 看板的分类口径按钮。 */
+    const BOARD_SCOPES = [
+      { id: 'all', label: '全部' },
+      { id: 'work', label: '仅工作' },
+      { id: 'personal', label: '仅个人' },
+    ];
+
+    /**
+     * 四象限看板。
+     *
+     * 交互：单击只是选中（视觉高亮），双击编辑；按住拖动排序，跨象限即改优先级。
+     * 不用 HTML5 dragstart/drop —— 它给不了「虚线落点 + 松手轻微回弹」，触屏上也不稳。
+     * 这里用 Pointer Events + 指针捕获：按下时 setPointerCapture，之后手指/鼠标移出卡片
+     * 仍然能收到 move / up，落点由各象限列表的矩形算出来。
+     */
+    function BoardTab(props) {
+      const { api, view, busy, boot } = props;
+      // hook 下标是测试预设状态用的契约：
+      // 0 selected / 1 drag / 2 landed / 3 toast / 4 adding / 5 addPriority / 6 editingId
+      const [selected, setSelected] = React.useState(null);
+      const [drag, setDrag] = React.useState(null);
+      const [landed, setLanded] = React.useState(null);
+      const [toast, setToast] = React.useState(null);
+      const [adding, setAdding] = React.useState(false);
+      const [addPriority, setAddPriority] = React.useState('P1');
+      const [editingId, setEditingId] = React.useState(null);
+      const [flipTick, setFlipTick] = React.useState(0);
+
+      const dragRef = React.useRef(null);
+      const pendingRef = React.useRef(null);
+      const flipRef = React.useRef(null);
+      const boardRef = React.useRef(null);
+      // 卡片 / 象限列表的 DOM，拖动时用来算落点与做 FLIP
+      const cardsRef = React.useRef({});
+      const listsRef = React.useRef({});
+
+      // 落定回弹 240ms 后摘掉，下一次移动还能再触发
+      React.useEffect(() => {
+        if (!landed) return undefined;
+        const timer = setTimeout(() => setLanded(null), 240);
+        return () => clearTimeout(timer);
+      }, [landed]);
+
+      // 移动提示 4 秒后自动消失（撤销就在这 4 秒里有效）
+      React.useEffect(() => {
+        if (!toast) return undefined;
+        const timer = setTimeout(() => setToast(null), 4000);
+        return () => clearTimeout(timer);
+      }, [toast]);
+
+      // FLIP：位置变化的那一帧，先按旧位置画出来，再用 transform 过渡回去 —— 卡片会「让开」
+      React.useEffect(() => {
+        const before = flipRef.current;
+        if (!before) return;
+        flipRef.current = null;
+        if (typeof requestAnimationFrame !== 'function') return;
+        for (const id of Object.keys(cardsRef.current)) {
+          const el = cardsRef.current[id];
+          const prev = before[id];
+          if (!el || !prev || typeof el.getBoundingClientRect !== 'function' || !el.style) continue;
+          const now = el.getBoundingClientRect();
+          const dy = prev.top - now.top;
+          if (Math.abs(dy) < 1) continue;
+          el.style.transition = 'none';
+          el.style.transform = `translateY(${dy}px)`;
+          requestAnimationFrame(() => {
+            el.style.transition = 'transform 180ms cubic-bezier(.2,.7,.2,1)';
+            el.style.transform = 'translateY(0)';
+          });
+        }
+      }, [flipTick]);
+
+      // 选中的卡片支持 Delete 删除、Esc 取消选中；点卡片以外的任何地方也取消
+      React.useEffect(() => {
+        if (!selected || typeof window === 'undefined' || typeof window.addEventListener !== 'function') return undefined;
+        const onDown = (event) => {
+          const target = event && event.target;
+          if (target && typeof target.closest === 'function' && target.closest('[data-card-id]')) return;
+          setSelected(null);
+        };
+        if (typeof document !== 'undefined' && document && typeof document.addEventListener === 'function') {
+          document.addEventListener('pointerdown', onDown);
+        }
+        const onKey = (event) => {
+          if (event.key === 'Escape') {
+            setSelected(null);
+            return;
+          }
+          if (event.key !== 'Delete' && event.key !== 'Backspace') return;
+          const tag = String((event.target && event.target.tagName) || '').toLowerCase();
+          if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+          if (typeof event.preventDefault === 'function') event.preventDefault();
+          api.send('todo_delete', { id: selected });
+          setSelected(null);
+        };
+        window.addEventListener('keydown', onKey);
+        return () => {
+          window.removeEventListener('keydown', onKey);
+          if (typeof document !== 'undefined' && document && typeof document.removeEventListener === 'function') {
+            document.removeEventListener('pointerdown', onDown);
+          }
+        };
+      }, [selected, api]);
+
+      /** 记录一次卡片位置快照（FLIP 用）。 */
+      function snapshotCards() {
+        const map = {};
+        for (const id of Object.keys(cardsRef.current)) {
+          const el = cardsRef.current[id];
+          if (el && typeof el.getBoundingClientRect === 'function') {
+            const rect = el.getBoundingClientRect();
+            map[id] = { top: rect.top, left: rect.left };
+          }
+        }
+        return map;
+      }
+
+      /** 指针在哪个象限、落在第几个位置；不在任何象限里就返回 null。 */
+      function dropTargetAt(x, y, movingId) {
+        let hit = null;
+        for (const priority of Object.keys(listsRef.current)) {
+          const el = listsRef.current[priority];
+          if (!el || typeof el.getBoundingClientRect !== 'function') continue;
+          const rect = el.getBoundingClientRect();
+          // 上下各放宽 10px，贴着边缘也不至于落空
+          if (x >= rect.left && x <= rect.right && y >= rect.top - 10 && y <= rect.bottom + 10) {
+            hit = priority;
+            break;
+          }
+        }
+        if (!hit) return null;
+        const listEl = listsRef.current[hit];
+        const siblings = listEl && typeof listEl.querySelectorAll === 'function'
+          ? Array.from(listEl.querySelectorAll('[data-card-id]')).filter((el) => el.getAttribute('data-card-id') !== movingId)
+          : [];
+        let index = siblings.length;
+        for (let i = 0; i < siblings.length; i += 1) {
+          if (typeof siblings[i].getBoundingClientRect !== 'function') continue;
+          const rect = siblings[i].getBoundingClientRect();
+          if (y < rect.top + rect.height / 2) {
+            index = i;
+            break;
+          }
+        }
+        return { priority: hit, index };
+      }
+
+      const setDragState = (next) => {
+        dragRef.current = next;
+        setDrag(next);
+      };
+
+      /** 按下：先记下起点，超过 5px 才算拖动（否则就是一次单击）。 */
+      function onCardDown(event, todo, priority, index) {
+        if (event.button !== undefined && event.button !== 0) return;
+        const el = event.currentTarget;
+        const rect = el && typeof el.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : null;
+        // 捕获放在看板根节点上：拖动开始后源卡片会被移出列表（DOM 卸载），
+        // 捕获在它身上会当场失效 —— 根节点不会动。
+        const board = boardRef.current;
+        if (board && typeof board.setPointerCapture === 'function' && event.pointerId !== undefined) {
+          try {
+            board.setPointerCapture(event.pointerId);
+          } catch (error) {
+            /* 不支持就算了，退化成普通点击 */
+          }
+        }
+        const startX = Number(event.clientX) || 0;
+        const startY = Number(event.clientY) || 0;
+        // 记下「按下时抓住了卡片的哪个位置」：浮卡按这个偏移跟随指针，
+        // 鼠标停在哪，卡片就停在哪 —— 不能用一个写死的偏移，否则一拖就跑偏。
+        const grabX = rect ? Math.max(0, Math.min(rect.width, startX - rect.left)) : 0;
+        const grabY = rect ? Math.max(0, Math.min(rect.height, startY - rect.top)) : 0;
+        pendingRef.current = {
+          id: todo.id,
+          title: todo.title,
+          dueDate: todo.dueDate,
+          priority,
+          index,
+          x: startX,
+          y: startY,
+          grabX,
+          grabY,
+          width: rect ? rect.width : 320,
+        };
+        setSelected(todo.id);
+      }
+
+      function onCardMove(event) {
+        const pending = pendingRef.current;
+        if (!pending) return;
+        const x = Number(event.clientX) || 0;
+        const y = Number(event.clientY) || 0;
+        const current = dragRef.current;
+        if (!current) {
+          if (Math.hypot(x - pending.x, y - pending.y) < 5) return;
+          setDragState({
+            id: pending.id,
+            title: pending.title,
+            dueDate: pending.dueDate,
+            fromPriority: pending.priority,
+            fromIndex: pending.index,
+            x,
+            y,
+            grabX: pending.grabX,
+            grabY: pending.grabY,
+            width: pending.width,
+            target: { priority: pending.priority, index: pending.index },
+          });
+          return;
+        }
+        // 出了象限就沿用上一个落点：宁可不动，也别在空白处松手把事挪丢
+        const target = dropTargetAt(x, y, current.id) || current.target;
+        const changed = !current.target || target.priority !== current.target.priority || target.index !== current.target.index;
+        if (changed) flipRef.current = snapshotCards();
+        setDragState({ ...current, x, y, target });
+        if (changed) setFlipTick((value) => value + 1);
+      }
+
+      /** 松手：没超过阈值就只是单击；落在不同位置才写库。 */
+      function onCardUp(event) {
+        const board = boardRef.current;
+        if (board && typeof board.releasePointerCapture === 'function' && event && event.pointerId !== undefined) {
+          try {
+            board.releasePointerCapture(event.pointerId);
+          } catch (error) {
+            /* ignore */
+          }
+        }
+        pendingRef.current = null;
+        const current = dragRef.current;
+        if (!current) return;
+        setDragState(null);
+        const target = current.target;
+        if (!target) return;
+        const cross = target.priority !== current.fromPriority;
+        if (!cross && target.index === current.fromIndex) return;
+        moveTodo(current, target, cross);
+      }
+
+      /** 调 Host 的原子动作：优先级 + 顺序一次改完。 */
+      function moveTodo(current, target, cross) {
+        api.send('todo_move', { id: current.id, priority: target.priority, index: target.index }, { silent: true }).then((result) => {
+          if (!result || result.ok !== true) return;
+          setLanded(current.id);
+          // 跨象限才有提示：同象限内的排序用户看得见，不必再说话
+          if (cross) {
+            setToast({
+              text: `已移至【${PRIORITY_INFO[target.priority].short}】`,
+              undo: { id: current.id, priority: current.fromPriority, index: current.fromIndex },
+            });
+          }
+        });
+      }
+
+      const undoMove = () => {
+        if (!toast || !toast.undo) return;
+        const undo = toast.undo;
+        setToast(null);
+        api.send('todo_move', { id: undo.id, priority: undo.priority, index: undo.index }, { silent: true });
+      };
+
+      const quadrantList = view && Array.isArray(view.quadrants) ? view.quadrants : [];
+      const projects = (boot && boot.projects) || [];
+      const editing = editingId
+        ? quadrantList.reduce((hit, quadrant) => hit || quadrant.todos.find((todo) => todo.id === editingId), null)
+        : null;
+
+      // 所有 hook 之后才允许提前返回，否则切换数据时 hook 数量会变
+      if (!view || !Array.isArray(view.quadrants)) return h('div', { className: 'aw-note' }, '加载中…');
+
+      /** 单张卡片：只有标题 + 截止日期（其余信息留给悬浮说明与编辑弹层）。 */
+      function cardNode(todo, priority, index) {
+        const isSel = selected === todo.id;
+        const isDragging = !!drag && drag.id === todo.id;
+        const dueClass = `aw-kcard-due${todo.dueDate ? '' : ' is-none'}${todo.overdue ? ' is-overdue' : ''}`;
+        return h(
+          'div',
+          {
+            key: todo.id,
+            'data-card-id': todo.id,
+            className: `aw-kcard${isSel ? ' is-sel' : ''}${isDragging ? ' is-drag' : ''}${landed === todo.id ? ' is-landed' : ''}`,
+            tabIndex: 0,
+            role: 'button',
+            title: todo.note ? `${todo.title}\n${todo.note}` : todo.title,
+            ref: (el) => {
+              if (el) cardsRef.current[todo.id] = el;
+              else delete cardsRef.current[todo.id];
+            },
+            onPointerDown: (event) => onCardDown(event, todo, priority, index),
+            onDoubleClick: () => setEditingId(todo.id),
+            onKeyDown: (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                if (typeof event.preventDefault === 'function') event.preventDefault();
+                setSelected(todo.id);
+              }
+            },
+          },
+          [
+            h('span', { key: 'bar', className: 'aw-kcard-bar', 'aria-hidden': 'true' }),
+            h('span', { key: 'title', className: 'aw-kcard-title' }, todo.title),
+            todo.note ? h('span', { key: 'note', className: 'aw-kcard-note', 'aria-hidden': 'true' }) : null,
+            todo.note ? h('div', { key: 'tip', className: 'aw-kcard-tip' }, todo.note) : null,
+            h('span', { key: 'due', className: dueClass }, todo.dueDate ? `${todo.dueDate} 截止` : '暂无截止'),
+          ],
+        );
+      }
+
+      /** 点在卡片以外的地方（空白、象限头、列表底）就取消选中。 */
+      function onBoardDown(event) {
+        const target = event && event.target;
+        if (target && typeof target.closest === 'function' && target.closest('[data-card-id]')) return;
+        if (selected) setSelected(null);
+      }
+
+      return h(
+        'div',
+        {
+          className: 'aw-kb',
+          ref: boardRef,
+          // 卡片外的按下 = 取消选中；卡片自己的选中由 onCardDown 负责
+          onPointerDown: onBoardDown,
+          // 指针捕获挂在这里：即使源卡片会从列表里消失，move / up 仍然收得到
+          onPointerMove: onCardMove,
+          onPointerUp: onCardUp,
+          onPointerCancel: onCardUp,
+        },
+        h(
+          'div',
+          { className: 'aw-kb-grid' },
+          quadrantList.map((quadrant) => {
+            const priority = quadrant.priority;
+            const info = PRIORITY_INFO[priority];
+            const isOver = !!drag && drag.target && drag.target.priority === priority;
+            // 拖动中的卡片从原位拿掉，改由落点占位表达「会插到这里」
+            const rows = quadrant.todos.filter((todo) => !(drag && drag.id === todo.id));
+            if (isOver) rows.splice(Math.min(drag.target.index, rows.length), 0, { __placeholder: true, id: '__drop__' });
+            return h(
+              'section',
+              {
+                key: priority,
+                className: `aw-q ${PRIORITY_CLASS[priority]}${isOver ? ' is-over' : ''}`,
+                'data-q': priority,
+              },
+              [
+                h(
+                  'header',
+                  { key: 'head', className: 'aw-q-head' },
+                  [
+                    h('span', { key: 'dot', className: 'aw-q-dot', 'aria-hidden': 'true' }),
+                    h(
+                      'div',
+                      { key: 'text', className: 'aw-q-text' },
+                      [
+                        h('div', { key: 'title', className: 'aw-q-title' }, info.short),
+                        h('div', { key: 'sub', className: 'aw-q-sub' }, info.action),
+                      ],
+                    ),
+                    h('span', { key: 'badge', className: 'aw-q-badge' }, `${quadrant.count} 项`),
+                    h(
+                      'button',
+                      {
+                        key: 'add',
+                        type: 'button',
+                        className: 'aw-q-add',
+                        title: `在「${info.short}」新建`,
+                        'aria-label': `在「${info.short}」新建`,
+                        onClick: () => {
+                          setAddPriority(priority);
+                          setAdding(true);
+                        },
+                      },
+                      '+',
+                    ),
+                  ],
+                ),
+                h(
+                  'div',
+                  {
+                    key: 'list',
+                    className: 'aw-q-list',
+                    ref: (el) => {
+                      if (el) listsRef.current[priority] = el;
+                      else delete listsRef.current[priority];
+                    },
+                  },
+                  rows.length === 0
+                    ? h('div', { key: 'empty', className: 'aw-q-empty' }, '暂无事项')
+                    : rows.map((todo) =>
+                        todo.__placeholder
+                          ? h('div', { key: '__drop__', className: 'aw-q-drop' }, '松开鼠标，放到这里')
+                          : cardNode(todo, priority, quadrant.todos.indexOf(todo)),
+                      ),
+                ),
+              ],
+            );
+          }),
+        ),
+        drag
+          ? h(
+              'div',
+              {
+                className: `aw-kb-ghost ${PRIORITY_CLASS[drag.fromPriority]}`,
+                // 浮层压在指针上方：落点提示留在指针下方，两者不打架
+                style: {
+                  // 保持按下时抓住的位置，浮卡才不会偏离指针
+                  left: drag.x - (drag.grabX || 0),
+                  top: Math.max(0, drag.y - (drag.grabY || 0)),
+                  width: Math.max(160, drag.width || 320),
+                },
+                'aria-hidden': 'true',
+              },
+              [
+                h('span', { key: 'bar', className: 'aw-kcard-bar' }),
+                h('span', { key: 'title', className: 'aw-kcard-title' }, drag.title),
+                h(
+                  'span',
+                  { key: 'due', className: `aw-kcard-due${drag.dueDate ? '' : ' is-none'}` },
+                  drag.dueDate ? `${drag.dueDate} 截止` : '暂无截止',
+                ),
+              ],
+            )
+          : null,
+        toast
+          ? h(
+              'div',
+              { className: 'aw-kb-toast', role: 'status' },
+              [
+                h('span', { key: 'check', className: 'aw-kb-toast-check', 'aria-hidden': 'true' }, '✓'),
+                h('span', { key: 'text' }, toast.text),
+                toast.undo
+                  ? h('button', { key: 'undo', type: 'button', className: 'aw-kb-undo', onClick: undoMove }, '撤销')
+                  : null,
+              ],
+            )
+          : null,
+        h(
+          Modal,
+          {
+            open: adding,
+            closable: true,
+            title: '新建待办',
+            onClose: () => setAdding(false),
+          },
+          h(TodoCreator, {
+            api,
+            projects,
+            busy,
+            priority: addPriority,
+            lockPriority: true,
+            onDone: () => setAdding(false),
+          }),
+        ),
+        h(TodoEditor, { api, todo: editing, projects, busy, onClose: () => setEditingId(null) }),
       );
     }
 
@@ -2847,9 +3427,12 @@ const CSS = `
     function WorkPage(props) {
       const api = props.api;
       const snap = useSnapshot(api);
+      const boot = snap.boot;
+      // 分类口径存在 Host 设置里：切到「仅个人」，下次打开还是「仅个人」
+      const boardScope = (boot && boot.settings && boot.settings.boardCategory) || 'all';
       // initialTab 只有本地渲染台（test/browser）会传，用来给每个分页一个可截图的 URL；
-      // DSH 里不传，行为与以前一致。
-      const [tab, setTab] = React.useState(props.initialTab || 'today');
+      // DSH 里不传：打开插件先看「看板」——四象限是每天最先要决定的一次取舍。
+      const [tab, setTab] = React.useState(props.initialTab || 'board');
       // initialSettings 同样只有本地渲染台会传：?settings=1 直接打开设置弹层，
       // 好让设置页也有一个可截图的 URL。
       const [settingsOpen, setSettingsOpen] = React.useState(!!props.initialSettings);
@@ -2875,10 +3458,11 @@ const CSS = `
       React.useEffect(() => {
         setProjectCreateOpen(false);
         if (tab === 'today') api.open('today');
+        else if (tab === 'board') api.open('board', { category: boardScope });
         else if (tab === 'projects') api.open('projects');
         else if (tab === 'reports') api.open('reports', { status: 'all' });
         // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [tab]);
+      }, [tab, tab === 'board' ? boardScope : '']);
 
       // 跨零点时自动把「今天」推到新的一天。
       React.useEffect(() => {
@@ -2900,9 +3484,9 @@ const CSS = `
         ensureStyle(pageRef.current);
       }, [skin]);
 
-      const boot = snap.boot;
       const view = snap.viewName === tab ? snap.view : null;
       const tabs = [
+        { id: 'board', label: '看板' },
         { id: 'today', label: '今日' },
         { id: 'projects', label: '项目' },
         { id: 'reports', label: '简报' },
@@ -3008,6 +3592,35 @@ const CSS = `
                 h(
                   'div',
                   { className: 'aw-split-row' },
+                  // 看板的分类口径属于「这一页怎么看」，放在页头右侧，和标题同一视线
+                  tab === 'board'
+                    ? h(
+                        'div',
+                        { className: 'aw-kb-scope', role: 'group', 'aria-label': '分类口径' },
+                        BOARD_SCOPES.map((scope) =>
+                          h(
+                            Btn,
+                            {
+                              key: scope.id,
+                              small: true,
+                              on: boardScope === scope.id,
+                              title: `分类口径：${scope.label}`,
+                              onClick: () =>
+                                api.send(
+                                  'settings_update',
+                                  {
+                                    settings: { boardCategory: scope.id },
+                                    view: 'board',
+                                    viewParams: { category: scope.id },
+                                  },
+                                  { silent: true },
+                                ),
+                            },
+                            scope.label,
+                          ),
+                        ),
+                      )
+                    : null,
                   tab === 'projects'
                     ? h('button', { type: 'button', className: 'aw-btn is-primary is-small', onClick: () => setProjectCreateOpen(true) }, '新增项目')
                     : null,
@@ -3021,7 +3634,9 @@ const CSS = `
 
           // 只把「确实属于当前分页」的视图喂给分页组件。切换分页时新数据还没到，
           // view 就是 null，各分页会退化成「加载中…」，而不是拿错数据崩掉。
-          tab === 'today'
+          tab === 'board'
+            ? h(BoardTab, { api, view, busy: snap.busy, boot })
+            : tab === 'today'
             ? h(TodayTab, { api, view, busy: snap.busy, boot })
               : tab === 'projects'
                 ? h(ProjectsTab, { api, view, busy: snap.busy, createOpen: projectCreateOpen, onCloseCreate: () => setProjectCreateOpen(false) })
