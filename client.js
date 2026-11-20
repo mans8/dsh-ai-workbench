@@ -5,7 +5,7 @@
  *   - sidebar.panellist / id = ai-workbench  → 左侧全局面板图标
  *   - main / key = ai-workbench              → 中央整页工作台
  *
- * 四个分页：今日 / 项目 / 报表 / 统计（设置是右上角的齿轮弹层）。
+ * 四个分页：今日 / 项目 / 简报 / 统计（设置是右上角的齿轮弹层）。
  * 所有数据都来自 Host 半体的 /ai-workbench/api；本文件只负责呈现与交互，
  * **不重复计算任何口径**（完成率、达成率、缺口都由 Host 算好）。
  * 样式只用 --dsw-alias-* 主题令牌（产品品牌色除外），明暗主题自动跟随。
@@ -43,10 +43,10 @@ window.__ModuleLoader__.load({
     };
 
     /** 构建标记：设置弹层底部会显示，用来确认 DSH 到底加载了哪一版。 */
-    const BUILD = 'v1.0.1 · 2026-11-20 · A56 待办说明';
+    const BUILD = 'v1.0.3 · 2026-11-20 · A58 生成简报竖排表单';
 
     /** 每个分页的页标题（对应参考稿里的「Main Dashboard」）。 */
-    const TAB_TITLE = { today: '今天', projects: '项目', reports: '报表', stats: '统计' };
+    const TAB_TITLE = { today: '今天', projects: '项目', reports: '简报', stats: '统计' };
 
     /** 可切换的皮肤。horizon 是 Pixso 参考稿那套；其余三套之前做过。 */
     const SKINS = [
@@ -125,7 +125,7 @@ const CSS = `
  * paper: #F4F7FE 淡紫灰 · card: #FFFFFF · ink: #1B2559 海军蓝 · muted: #A3AED0 · accent: #4318FF 靛蓝 · accent-2: #6AD2FF 浅青
  * nav: 左侧 rail，选中=靛蓝文字 + 图标 + 右缘 3px 指示条 · signature: 白卡台账（20px 圆角 + 极柔阴影）· states: full, empty, loading, error
  * axes: horizon/indigo-cyan/white-card · posture: committed · contrast: pass · skins: horizon(默认), lido, dusk, jade · v5.0.0
- * build: v1.0.1 · A56 待办说明（新增待办补多行说明；「备注」统一改称「说明」，字段仍是 note）· A55 计划日退场 · A54 今日页密度收紧（统计卡 67px / 台账行 40px / 页头 32px，去掉重复的「今日待办」卡）· A53 新增待办弹层 · A52 设置改回弹窗（面板唯一框，一行一项，分组，删除单列）· A51 曾改整页 · A50 描边照抄 · A49 Pixso 校准 · A47 design.md 契约
+ * build: v1.0.2 · A57 简报（生成改弹窗 + 项目分类口径 + 新版周报 + 报表改名简报）· A56 待办说明（新增待办补多行说明；「备注」统一改称「说明」，字段仍是 note）· A55 计划日退场 · A54 今日页密度收紧（统计卡 67px / 台账行 40px / 页头 32px，去掉重复的「今日待办」卡）· A53 新增待办弹层 · A52 设置改回弹窗（面板唯一框，一行一项，分组，删除单列）· A51 曾改整页 · A50 描边照抄 · A49 Pixso 校准 · A47 design.md 契约
  * sweep: 4 FAIL (gate 40, 输入框描边 1.26:1) — 用户明确要求照抄参考稿的 #E0E5F2，属有意偏离，非漏改
  * 其余 0 REFLEX · 0 WARN (app scope, 20 route×skin) · copy: verbatim · 可读性由「字段上方标签 + 占位符」承担
  * 与参考的偏差：参考用紫蓝渐变做「Upgrade to PRO」卡与柱图，这里一律用实色靛蓝（Hallmark 2a 禁紫蓝渐变） */
@@ -355,6 +355,8 @@ const CSS = `
 .aw-btn.is-danger:hover:not(:disabled){background:color-mix(in srgb,var(--danger) 8%,transparent)}
 .aw-btn.is-gold{background:transparent;color:var(--warn);box-shadow:none}
 .aw-btn.is-on{background:var(--accent);color:var(--on-accent);box-shadow:none}
+/* 选中态不能被 hover 冲掉：鼠标停在选中的分段上时仍然是靛蓝实心（分隔段看图看不清状态） */
+.aw-btn.is-on:hover:not(:disabled){background:var(--accent-hi);color:var(--on-accent)}
 .aw-btn.is-small{height:32px;padding:0 12px;font-size:var(--fs-caption);font-weight:600}
 
 .aw-input,.aw-select,.aw-textarea{font:inherit;font-size:var(--fs-body);letter-spacing:-.02em;height:var(--ctl-h);padding:0 24px;border-radius:var(--r-input);
@@ -381,6 +383,9 @@ const CSS = `
 .aw-form-vertical .aw-weekdays{display:flex;gap:6px;flex-wrap:wrap}
 .aw-form-vertical .aw-submit-wrap{width:100%}
 .aw-form-vertical .aw-submit-wrap .aw-btn{width:100%}
+/* 分段开关：选项平分整行、与输入框同高，竖排表单里不出现矮一档的控件 */
+.aw-seg{display:flex;gap:8px}
+.aw-seg .aw-btn{flex:1 1 0;height:var(--ctl-h)}
 .aw-modal-confirm{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px;order:-1;
   border-radius:var(--r-input);background:var(--paper-3);color:var(--ink-2);font-size:var(--fs-meta)}
 
@@ -807,7 +812,7 @@ const CSS = `
       if (/率|缺口|差|节拍/.test(text)) return 'chart';
       if (/截止|提醒/.test(text)) return 'clock';
       if (/逾期|超期/.test(text)) return 'alert';
-      if (/草稿|报表/.test(text)) return 'draft';
+      if (/草稿|报表|简报/.test(text)) return 'draft';
       return 'done';
     }
 
@@ -2035,7 +2040,7 @@ const CSS = `
       return { date: today };
     }
 
-    /* ================= 报表 ================= */
+    /* ================= 简报 ================= */
 
     function ReportsTab(props) {
       const api = props.api;
@@ -2054,6 +2059,20 @@ const CSS = `
       const [editing, setEditing] = React.useState(false);
       // 9：选中的周报文件（配置了多个时才有下拉）
       const [targetFile, setTargetFile] = React.useState('');
+      // 分类口径与生成弹窗放在最后：不改动前面 use* 的下标（测试按顺序注入）。
+      const [categoryScope, setCategoryScope] = React.useState('work');
+      const [genOpen, setGenOpen] = React.useState(false);
+
+      /** 打开生成弹窗：每次回来都是默认口径（本周 / 仅工作）。 */
+      const openGenerate = () => {
+        setDimension('time');
+        setType('weekly');
+        setDate(localToday());
+        setWeekCustom(null);
+        setProjectId('');
+        setCategoryScope('work');
+        setGenOpen(true);
+      };
 
       React.useEffect(() => {
         api.open('reports', { status, q });
@@ -2065,7 +2084,7 @@ const CSS = `
       const currentFile = targetFile && reportFiles.includes(targetFile) ? targetFile : reportFiles[0] || '';
       const shortName = (key) => String(key).split('/').pop();
 
-      /** 打开一份报表并载入正文。 */
+      /** 打开一份简报并载入正文。 */
       const openReport = async (id) => {
         try {
           const response = await fetch(`${ROUTE}?view=report&id=${encodeURIComponent(id)}&today=${localToday()}`);
@@ -2076,7 +2095,7 @@ const CSS = `
             setEditing(false);
           }
         } catch (error) {
-          api.flash('error', `载入报表失败：${String(error.message || error)}`);
+          api.flash('error', `载入简报失败：${String(error.message || error)}`);
         }
       };
 
@@ -2101,16 +2120,23 @@ const CSS = `
         const week = weekCustom ?? reportWeek(date);
         const payload =
           dimension === 'project'
-            ? { type: 'project', projectId, date }
-            : type === 'weekly' && weekCustom
-              ? { type, date, from: week.from, to: week.to }
-              : { type, date };
+            ? { type: 'project', projectId, date, category: 'all' }
+            : {
+                type,
+                date,
+                // 项目维度已经由项目限定范围，分类口径不参与。
+                category: categoryScope,
+                ...(type === 'weekly' && weekCustom ? { from: week.from, to: week.to } : {}),
+              };
         if (dimension === 'project' && !projectId) {
           api.flash('warn', '项目维度需要先选一个项目');
           return;
         }
         api.send('report_create', payload).then((result) => {
-          if (result.ok && result.data && result.data.id) openReport(result.data.id);
+          if (result.ok && result.data && result.data.id) {
+            setGenOpen(false);
+            openReport(result.data.id);
+          }
         });
       };
 
@@ -2128,86 +2154,10 @@ const CSS = `
         'div',
         { style: { display: 'flex', flexDirection: 'column', gap: 14 } },
         h(Card, {
-          title: '生成报表',
-          extra: h(
-            'span',
-            { className: 'aw-split-row' },
-            h(Btn, { small: true, on: dimension === 'time', onClick: () => setDimension('time') }, '时间维度'),
-            h(Btn, { small: true, on: dimension === 'project', onClick: () => setDimension('project') }, '项目维度'),
-          ),
-          children: h(
-            'div',
-            { className: 'aw-form' },
-            dimension === 'time'
-              ? h(
-                  'select',
-                  { className: 'aw-select', value: type, onChange: (event) => setType(event.target.value) },
-                  h('option', { value: 'weekly' }, '周报'),
-                  h('option', { value: 'monthly' }, '月报'),
-                  h('option', { value: 'yearly' }, '年报'),
-                )
-              : h(
-                  'select',
-                  { className: 'aw-select', value: projectId, onChange: (event) => setProjectId(event.target.value) },
-                  h('option', { value: '' }, '选择项目…'),
-                  projects.map((project) => h('option', { key: project.id, value: project.id }, `${project.emoji}${project.name}`)),
-                ),
-            dimension === 'time' && type === 'weekly'
-              ? [
-                  h('input', {
-                    key: 'wf',
-                    className: 'aw-input',
-                    style: { width: 150 },
-                    type: 'date',
-                    value: (weekCustom ?? reportWeek(date)).from,
-                    title: '周报区间起点',
-                    onChange: (event) =>
-                      setWeekCustom({ from: event.target.value, to: (weekCustom ?? reportWeek(date)).to }),
-                  }),
-                  h('span', { key: 'sep', className: 'aw-note' }, '~'),
-                  h('input', {
-                    key: 'wt',
-                    className: 'aw-input',
-                    style: { width: 150 },
-                    type: 'date',
-                    value: (weekCustom ?? reportWeek(date)).to,
-                    title: '周报区间终点',
-                    onChange: (event) =>
-                      setWeekCustom({ to: event.target.value, from: (weekCustom ?? reportWeek(date)).from }),
-                  }),
-                  weekCustom
-                    ? h(
-                        Btn,
-                        {
-                          key: 'reset',
-                          small: true,
-                          tone: 'ghost',
-                          onClick: () => setWeekCustom(null),
-                          title: '回到本周一 ~ 本周五',
-                        },
-                        '回到默认',
-                      )
-                    : null,
-                ]
-              : h('input', {
-                  className: 'aw-input',
-                  type: 'date',
-                  value: date,
-                  onChange: (event) => {
-                    setDate(event.target.value);
-                    setWeekCustom(null);
-                  },
-                  title: dimension === 'time' ? '以这一天定位所在周 / 月 / 年' : '以这一天定位所在月',
-                }),
-            h(Btn, { tone: 'primary', disabled: busy, onClick: generate }, '生成草稿'),
-          ),
-        }),
-
-        h(Card, {
           title: h(
             'span',
             { className: 'aw-split-row' },
-            '报表库 ',
+            '简报库 ',
             h(Chip, { children: `草稿 ${counts.draft}` }),
             h(Chip, { tone: 'ok', children: `已定稿 ${counts.final}` }),
             h(Chip, { tone: 'gold', children: `已归档 ${counts.archived}` }),
@@ -2215,6 +2165,7 @@ const CSS = `
           extra: h(
             'span',
             { className: 'aw-split-row' },
+            h(Btn, { small: true, tone: 'primary', disabled: busy, onClick: openGenerate }, '生成简报'),
             h(
               'select',
               { className: 'aw-select', value: status, onChange: (event) => setStatus(event.target.value) },
@@ -2234,7 +2185,7 @@ const CSS = `
           ),
           children:
             view.reports.length === 0
-              ? h(Empty, null, '还没有报表。上面选个范围点「生成草稿」。')
+              ? h(Empty, null, '还没有简报。点右上角「生成简报」选个范围。')
               : h(
                   'div',
                   { className: 'aw-list' },
@@ -2322,6 +2273,116 @@ const CSS = `
               ),
             })
           : null,
+
+        h(
+          Modal,
+          { open: genOpen, closable: true, title: '生成简报', onClose: () => setGenOpen(false) },
+          h(
+            'div',
+            { className: 'aw-form-vertical' },
+            // 一项一行：名称在上、控件占满整行，按填写顺序从上往下排。
+            h(
+              Field,
+              { label: '维度' },
+              h(
+                'div',
+                { className: 'aw-seg' },
+                h(Btn, { on: dimension === 'time', onClick: () => setDimension('time') }, '时间维度'),
+                h(Btn, { on: dimension === 'project', onClick: () => setDimension('project') }, '项目维度'),
+              ),
+            ),
+            dimension === 'time'
+              ? h(
+                  Field,
+                  { label: '类型' },
+                  h(
+                    'select',
+                    { className: 'aw-select', value: type, onChange: (event) => setType(event.target.value) },
+                    h('option', { value: 'weekly' }, '周报'),
+                    h('option', { value: 'monthly' }, '月报'),
+                    h('option', { value: 'yearly' }, '年报'),
+                  ),
+                )
+              : h(
+                  Field,
+                  { label: '项目' },
+                  h(
+                    'select',
+                    { className: 'aw-select', value: projectId, onChange: (event) => setProjectId(event.target.value) },
+                    h('option', { value: '' }, '选择项目…'),
+                    projects.map((project) => h('option', { key: project.id, value: project.id }, `${project.emoji}${project.name}`)),
+                  ),
+                ),
+            // 项目维度已经由项目限定范围，不再给分类口径。
+            dimension === 'time'
+              ? h(
+                  Field,
+                  { label: '项目分类' },
+                  h(
+                    'select',
+                    { className: 'aw-select', value: categoryScope, onChange: (event) => setCategoryScope(event.target.value) },
+                    h('option', { value: 'all' }, '全部'),
+                    h('option', { value: 'work' }, '仅工作'),
+                    h('option', { value: 'personal' }, '仅个人'),
+                  ),
+                )
+              : null,
+            dimension === 'time' && type === 'weekly'
+              ? [
+                  h(
+                    Field,
+                    { key: 'wf', label: '区间起点' },
+                    h('input', {
+                      className: 'aw-input',
+                      type: 'date',
+                      value: (weekCustom ?? reportWeek(date)).from,
+                      title: '周报区间起点',
+                      onChange: (event) =>
+                        setWeekCustom({ from: event.target.value, to: (weekCustom ?? reportWeek(date)).to }),
+                    }),
+                  ),
+                  h(
+                    Field,
+                    { key: 'wt', label: '区间终点' },
+                    h('input', {
+                      className: 'aw-input',
+                      type: 'date',
+                      value: (weekCustom ?? reportWeek(date)).to,
+                      title: '周报区间终点',
+                      onChange: (event) =>
+                        setWeekCustom({ to: event.target.value, from: (weekCustom ?? reportWeek(date)).from }),
+                    }),
+                  ),
+                  weekCustom
+                    ? h(
+                        'div',
+                        { key: 'reset', style: { display: 'flex', justifyContent: 'flex-start' } },
+                        h(Btn, { small: true, tone: 'ghost', onClick: () => setWeekCustom(null), title: '回到本周一 ~ 本周五' }, '回到默认'),
+                      )
+                    : null,
+                ]
+              : h(
+                  Field,
+                  { label: dimension === 'time' ? '定位日期' : '定位月份' },
+                  h('input', {
+                    className: 'aw-input',
+                    type: 'date',
+                    value: date,
+                    onChange: (event) => {
+                      setDate(event.target.value);
+                      setWeekCustom(null);
+                    },
+                    title: dimension === 'time' ? '以这一天定位所在周 / 月 / 年' : '以这一天定位所在月',
+                  }),
+                ),
+          ),
+          h(
+            'div',
+            { className: 'aw-form', style: { justifyContent: 'flex-end' } },
+            h(Btn, { tone: 'ghost', onClick: () => setGenOpen(false) }, '取消'),
+            h(Btn, { tone: 'primary', disabled: busy, onClick: generate }, '生成简报'),
+          ),
+        ),
       );
     }
 
@@ -2525,6 +2586,7 @@ const CSS = `
         reportFiles: (boot.settings.reportFiles || []).join('\n'),
         reportSignature: boot.settings.reportSignature ?? '',
         reportTemplate: boot.settings.reportTemplate || '',
+        reportTitlePrefix: boot.settings.reportTitlePrefix ?? '周报',
       };
     }
 
@@ -2555,6 +2617,7 @@ const CSS = `
                 .filter(Boolean),
               reportSignature: draft.reportSignature,
               reportTemplate: draft.reportTemplate,
+              reportTitlePrefix: draft.reportTitlePrefix,
             },
           })
           .then((result) => result.ok && api.reload());
@@ -2584,13 +2647,23 @@ const CSS = `
           ),
         ),
 
-        /* ── 报表 ── */
+        /* ── 简报 ── */
         h(
           SetGroup,
-          { title: '报表' },
+          { title: '简报' },
           h(
             SetRow,
-            { label: '报表落款 / 附加说明' },
+            { label: '简报标题前缀', hint: '周报正文首行：前缀（2026.11.9-2026.11.13）' },
+            h('input', {
+              className: 'aw-input',
+              placeholder: '周报',
+              value: draft.reportTitlePrefix,
+              onChange: (event) => setDraft({ ...draft, reportTitlePrefix: event.target.value }),
+            }),
+          ),
+          h(
+            SetRow,
+            { label: '简报落款 / 附加说明' },
             h('input', { className: 'aw-input', value: draft.reportFooter, onChange: (event) => setDraft({ ...draft, reportFooter: event.target.value }) }),
           ),
           h(
@@ -2607,14 +2680,14 @@ const CSS = `
             SetRow,
             {
               wide: true,
-              label: '自定义报表模板',
-              hint: '留空用内置版式；支持 {{title}} / {{weeklyCompleted}} / {{nextWeek}} / {{completed}} / {{stats}} 等占位符',
+              label: '自定义简报模板',
+              hint: '留空用内置版式；支持 {{title}} / {{weeklyCompleted}} / {{nextPlan}} / {{nextWeek}} / {{completed}} / {{stats}} 等占位符',
               stacked: true,
             },
             h('textarea', {
               className: 'aw-textarea',
               rows: 5,
-              placeholder: '本周完成：\n{{weeklyCompleted}}\n\n下周待办：\n{{nextWeek}}',
+              placeholder: '{{title}}\n一、本周总结\n{{weeklyCompleted}}\n二、下周计划\n{{nextPlan}}',
               value: draft.reportTemplate,
               onChange: (event) => setDraft({ ...draft, reportTemplate: event.target.value }),
             }),
@@ -2832,7 +2905,7 @@ const CSS = `
       const tabs = [
         { id: 'today', label: '今日' },
         { id: 'projects', label: '项目' },
-        { id: 'reports', label: '报表' },
+        { id: 'reports', label: '简报' },
         { id: 'stats', label: '统计' },
       ];
 
@@ -2860,7 +2933,7 @@ const CSS = `
                 'div',
                 null,
                 h('div', { className: 'aw-brand-name' }, 'AI 工作台账'),
-                h('div', { className: 'aw-brand-sub' }, '待办 · 报表 · 统计'),
+                h('div', { className: 'aw-brand-sub' }, '待办 · 简报 · 统计'),
               ),
             ),
             h(

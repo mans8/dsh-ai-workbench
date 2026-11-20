@@ -247,6 +247,7 @@ group('2. 待办清单与未完成事项的持续可见');
     assert.equal(boot.view.today, '2026-10-12');
     assert.equal(boot.view.counts.todayPlanned, 0);
     assert.equal(boot.view.settings.reportFooter !== undefined, true);
+    assert.equal(boot.view.settings.reportTitlePrefix, '周报');
     assert.equal(boot.view.holiday.maxYear, 2026);
     assert.ok(boot.view.cursor);
     assert.ok(boot.view.counts);
@@ -446,16 +447,21 @@ group('5. 周报 / 月报 / 年报 与历史归档');
     assert.equal(reversed.data.report.to, '2026-10-03');
   });
 
-  check('周报按公司模板：本周完成 + 项目分组 + 下周待办', () => {
-    assert.ok(report.content.startsWith('本周完成：\n【'), `开头不对：${JSON.stringify(report.content.slice(0, 40))}`);
-    assert.ok(report.content.includes('【订单中台】'), '缺少项目分段');
-    assert.match(report.content, /^1\.订单导出接口重构（100%）$/m);
-    assert.match(report.content, /^2\.支付回调幂等性改造（100%）$/m);
-    assert.ok(report.content.includes('下周待办：'), '缺少下周待办');
-    // 未完成的那条：本周完成里按 30% 出现，同时进下周待办（不带百分比）
-    assert.match(report.content, /^1\.对账系统灰度方案设计（30%）$/m);
-    assert.match(report.content, /^1\.对账系统灰度方案设计$/m);
-    // 周报不再有 Markdown 标题、工时、说明正文
+  check('周报按公司模板：本周总结 + 项目分组 + 下周计划', () => {
+    assert.ok(
+      report.content.startsWith('周报（2026.10.5-2026.10.9）\n一、本周总结\n1.订单中台\n'),
+      `开头不对：${JSON.stringify(report.content.slice(0, 60))}`,
+    );
+    assert.match(report.content, /^  1）订单导出接口重构$/m);
+    assert.match(report.content, /^  2）支付回调幂等性改造$/m);
+    assert.match(report.content, /^  3）与产品对齐导出字段$/m);
+    // 未完成的那条：本周总结里出现一次，同时进下周计划
+    assert.match(report.content, /^2\.对账系统\n  1）对账系统灰度方案设计$/m);
+    assert.ok(report.content.includes('二、下周计划'), '缺少下周计划');
+    const next = report.content.split('二、下周计划')[1];
+    assert.match(next, /^1\.对账系统\n  1）对账系统灰度方案设计$/m);
+    // 不再有百分比 / Markdown 标题 / 工时 / 说明正文
+    assert.ok(!report.content.includes('%'), '新版周报不该再写百分比');
     assert.ok(!/^#/m.test(report.content), '周报不该有 Markdown 标题');
     assert.ok(!report.content.includes('工时'), '周报不该出现工时');
     assert.ok(!report.content.includes('QPS 从 120 提到 900'), '周报不展开说明');
@@ -785,11 +791,16 @@ group('8. 设置、节假日覆盖与协议边界');
   });
 
   await checkAsync('settings_update 改设置后 bootstrap 反映新值', async () => {
-    const updated = await E.ok({ action: 'settings_update', settings: { reportFooter: '测试页脚' } });
+    const updated = await E.ok({
+      action: 'settings_update',
+      settings: { reportFooter: '测试页脚', reportTitlePrefix: 'AI治理项目周报' },
+    });
     assert.equal(updated.data.settings.reportFooter, '测试页脚');
+    assert.equal(updated.data.settings.reportTitlePrefix, 'AI治理项目周报');
     const boot2 = await E.get('bootstrap');
     assert.equal(boot2.view.settings.reportFooter, '测试页脚');
-    await E.ok({ action: 'settings_update', settings: { reportFooter: '' } });
+    assert.equal(boot2.view.settings.reportTitlePrefix, 'AI治理项目周报');
+    await E.ok({ action: 'settings_update', settings: { reportFooter: '', reportTitlePrefix: '周报' } });
   });
 
   await E.ok({ action: 'holiday_override_set', date: '2026-10-13', kind: 'holiday' });
@@ -1066,60 +1077,79 @@ group('14. 周报草稿严格按公司模板输出');
   const weekly = await K.ok({ action: 'report_create', type: 'weekly', date: '2026-10-22' });
   const content = weekly.data.report.content;
 
-  check('本周完成：项目分组 + 编号 + 完成度，逐字符合模板', () => {
+  check('本周总结：项目分组 + 编号，逐字符合模板', () => {
     assert.equal(
       content,
       [
-        '本周完成：',
-        '【示例银行-村镇银行】',
-        '1.村镇银行生产定时短信无法处理问题修复（30%）',
-        '【示例政务客户】',
-        '1.公共jdbc组件对接加密平台（100%）',
-        '2.历史数据加解密工具对接加密平台（100%）',
-        '3.加密平台模拟工具开发（100%）',
-        '4.加密功能自测（10%）',
-        '下周待办：',
-        '1.村镇银行生产定时短信无法处理问题修复',
-        '2.加密功能自测',
-        '3.文档编写',
-        '4.架构评审',
+        '周报（2026.10.19-2026.10.23）',
+        '一、本周总结',
+        '1.示例银行-村镇银行',
+        '  1）村镇银行生产定时短信无法处理问题修复',
+        '2.示例政务客户',
+        '  1）公共jdbc组件对接加密平台',
+        '  2）历史数据加解密工具对接加密平台',
+        '  3）加密平台模拟工具开发',
+        '  4）加密功能自测',
+        '二、下周计划',
+        '1.示例银行-村镇银行',
+        '  1）村镇银行生产定时短信无法处理问题修复',
+        '  2）架构评审',
+        '2.示例政务客户',
+        '  1）加密功能自测',
+        '  2）文档编写',
       ].join('\n'),
     );
   });
 
-  check('格式细节：半角「1.」、全角括号「（30%）」、组间不空行', () => {
-    assert.match(content, /^本周完成：$/m);
-    assert.match(content, /^【.+】$/m);
-    assert.match(content, /^1\.[^\n]+（\d+%）$/m, '编号必须是半角句点且紧跟标题');
+  check('格式细节：一、/二、 + 半角「1.」+ 两空格缩进的全角「1）」+ 组间不空行', () => {
+    assert.match(content, /^一、本周总结$/m);
+    assert.match(content, /^二、下周计划$/m);
+    assert.match(content, /^1\.[^\n]+$/m, '项目行必须是半角句点且紧跟项目名');
+    assert.match(content, /^  \d+）[^\n]+$/m, '事项行必须是两空格缩进 + 全角右括号');
     assert.ok(!content.includes('\n\n'), '整份周报不该出现空行');
+    assert.ok(!content.includes('%'), '新版周报不写百分比');
     assert.ok(!/^#/m.test(content), '不该有 Markdown 标题');
     assert.ok(!content.includes('工时'), '不该出现工时');
+    assert.ok(!content.includes('QPS 从 120 提到 900'), '不该展开待办说明');
   });
 
-  check('做完了就是 100%，没填进度的一律按 30%', () => {
-    assert.ok(content.includes('公共jdbc组件对接加密平台（100%）'));
-    // 只填了 10% 的保留 10%，没填的按 30%
-    assert.ok(content.includes('加密功能自测（10%）'));
-    assert.ok(content.includes('村镇银行生产定时短信无法处理问题修复（30%）'));
+  check('完成度只留在 facts 里，正文不再写出来', () => {
+    const facts = weekly.data.report.facts;
+    const group = facts.weeklyGroups.find((item) => item.name === '示例政务客户');
+    assert.deepEqual(
+      group.items.map((item) => item.progress),
+      [100, 100, 100, 10],
+      'facts 里应当仍然保留每条事项的进度',
+    );
+    assert.ok(!content.includes('10%') && !content.includes('100%'));
   });
 
-  check('未完成的任务同时进入下周待办，且不带百分比', () => {
-    const next = content.split('下周待办：')[1].split('\n').filter(Boolean);
+  check('未完成的任务同时进入下周计划，且不带百分比', () => {
+    const next = content.split('二、下周计划')[1].split('\n').filter(Boolean);
     assert.deepEqual(next, [
-      '1.村镇银行生产定时短信无法处理问题修复',
-      '2.加密功能自测',
-      '3.文档编写',
-      '4.架构评审',
+      '1.示例银行-村镇银行',
+      '  1）村镇银行生产定时短信无法处理问题修复',
+      '  2）架构评审',
+      '2.示例政务客户',
+      '  1）加密功能自测',
+      '  2）文档编写',
     ]);
   });
 
   check('组内按创建顺序，而不是按标题排序', () => {
-    const block = content.split('【示例政务客户】')[1].split('下周待办：')[0].trim().split('\n');
-    assert.deepEqual(block, [
-      '1.公共jdbc组件对接加密平台（100%）',
-      '2.历史数据加解密工具对接加密平台（100%）',
-      '3.加密平台模拟工具开发（100%）',
-      '4.加密功能自测（10%）',
+    // 「本周总结」里第二个项目（示例政务客户）的组内顺序
+    const govBlock = content
+      .split('一、本周总结')[1]
+      .split('二、下周计划')[0]
+      .split('2.示例政务客户')[1]
+      .trim()
+      .split('\n')
+      .map((line) => line.trim());
+    assert.deepEqual(govBlock, [
+      '1）公共jdbc组件对接加密平台',
+      '2）历史数据加解密工具对接加密平台',
+      '3）加密平台模拟工具开发',
+      '4）加密功能自测',
     ]);
   });
 
@@ -1135,7 +1165,7 @@ group('14. 周报草稿严格按公司模板输出');
   await checkAsync('改过标题 / 换过项目的待办，生成的周报必须用最新信息', async () => {
     // ① 先按当时的名字完成一件、并生成一次周报
     const before = (await K.ok({ action: 'report_create', type: 'weekly', date: '2026-10-22' })).data.report;
-    assert.ok(before.content.includes('公共jdbc组件对接加密平台（100%）'), '基线不对');
+    assert.ok(before.content.includes('  1）公共jdbc组件对接加密平台'), '基线不对');
 
     // ② 已完成的那条：改标题 + 换项目
     const jdbcId = (await K.get('todos', { status: 'done' })).view.todos.find((item) => item.title === '公共jdbc组件对接加密平台').id;
@@ -1147,23 +1177,137 @@ group('14. 周报草稿严格按公司模板输出');
 
     // ④ 重新生成
     const after = (await K.ok({ action: 'report_create', type: 'weekly', date: '2026-10-22' })).data.report;
-    assert.match(after.content, /公共jdbc组件对接加密平台（二期）（100%）/, `已完成条目没跟上新标题：\n${after.content}`);
-    assert.match(after.content, /加密功能自测（三轮）（10%）/, '未完成条目没跟上新标题');
-    assert.ok(!after.content.includes('1.公共jdbc组件对接加密平台（100%）'), '还残留旧标题');
+    assert.match(after.content, /^  2）公共jdbc组件对接加密平台（二期）$/m, `已完成条目没跟上新标题：\n${after.content}`);
+    assert.match(after.content, /^  3）加密功能自测（三轮）$/m, '未完成条目没跟上新标题');
+    assert.ok(!after.content.includes('1）公共jdbc组件对接加密平台\n'), '还残留旧标题');
 
     // 换项目后应当落到新的项目段里
-    const bankBlock = after.content.split('【示例银行-村镇银行】')[1].split('【')[0];
+    const bankBlock = after.content.split('1.示例银行-村镇银行')[1].split('\n2.')[0];
     assert.match(bankBlock, /公共jdbc组件对接加密平台（二期）/, `换项目后没进新分组：\n${after.content}`);
 
-    // 下周待办也跟着用新标题
-    const next = after.content.split('下周待办：')[1];
-    assert.match(next, /加密功能自测（三轮）/, '下周待办还在用旧标题');
+    // 下周计划也跟着用新标题
+    const next = after.content.split('二、下周计划')[1];
+    assert.match(next, /加密功能自测（三轮）/, '下周计划还在用旧标题');
   });
 
   await checkAsync('月报 / 项目维度仍然用完整的叙述格式（不受周报口径影响）', async () => {
     const monthly = await K.ok({ action: 'report_create', type: 'monthly', date: '2026-10-22' });
     assert.match(monthly.data.report.content, /^# /m, '月报应当还有标题');
     assert.ok(monthly.data.report.content.includes('##'), '月报应当还有章节');
+  });
+}
+
+/* ------------------------------------------------------------------ *
+ * 14b. 简报：项目分类口径 / 标题前缀 / Agent 工具默认口径
+ * ------------------------------------------------------------------ */
+
+const B = await harness('brief');
+
+group('14b. 简报项目分类口径与标题前缀');
+{
+  await B.ok({ action: 'project_create', name: '工作报告', emoji: '💼' });
+  await B.ok({ action: 'project_create', name: '私人阅读', emoji: '📚', category: 'personal' });
+  // 10-19 建出来，10-20 完成
+  await B.day('2026-10-19').ok({ action: 'todo_create', title: '周会纪要', project: '工作报告' });
+  await B.day('2026-10-19').ok({ action: 'todo_create', title: '读完架构书', project: '私人阅读' });
+  // 没有项目的条目：分类口径里算「工作」
+  await B.day('2026-10-19').ok({ action: 'todo_create', title: '随手记一件事' });
+  // 未完成的一条个人待办，用来验证「下周计划」也被同一口径裁剪
+  await B.day('2026-10-19').ok({ action: 'todo_create', title: '周末整理书架', project: '私人阅读' });
+  for (const title of ['周会纪要', '读完架构书', '随手记一件事']) {
+    await B.ok({ action: 'todo_complete', task: title, date: '2026-10-20' });
+  }
+
+  const weekly = (date = '2026-10-22', category) =>
+    B.ok({ action: 'report_create', type: 'weekly', date, ...(category ? { category } : {}) });
+
+  const work = (await weekly('2026-10-22', 'work')).data.report;
+  check('仅工作：收工作项目与未归类，滤掉个人项目', () => {
+    assert.equal(work.facts.meta.categoryScope, 'work');
+    assert.equal(work.facts.totals.done, 2);
+    assert.match(work.content, /^1\.工作报告\n  1）周会纪要$/m);
+    assert.match(work.content, /^2\.未归类\n  1）随手记一件事$/m);
+    assert.ok(!work.content.includes('读完架构书'), '个人项目的完成记录不该出现');
+    assert.ok(!work.content.includes('周末整理书架'), '个人项目的下周计划不该出现');
+  });
+
+  const personal = (await weekly('2026-10-22', 'personal')).data.report;
+  check('仅个人：只留个人项目，未归类被滤掉', () => {
+    assert.equal(personal.facts.meta.categoryScope, 'personal');
+    assert.equal(personal.facts.totals.done, 1);
+    assert.match(personal.content, /^1\.私人阅读\n  1）读完架构书$/m);
+    assert.match(personal.content, /^1\.私人阅读\n  1）周末整理书架$/m);
+    assert.ok(!personal.content.includes('周会纪要'));
+    assert.ok(!personal.content.includes('随手记一件事'));
+  });
+
+  const all = (await weekly('2026-10-22', 'all')).data.report;
+  check('全部：三类都在，顺序按建项目的先后，未归类垫底', () => {
+    assert.equal(all.facts.meta.categoryScope, 'all');
+    assert.equal(all.facts.totals.done, 3);
+    assert.ok(all.content.indexOf('1.工作报告') < all.content.indexOf('2.私人阅读'));
+    assert.match(all.content, /^3\.未归类$/m);
+  });
+
+  const bad = await B.post({ action: 'report_create', type: 'weekly', date: '2026-10-22', category: 'nope' });
+  check('非法分类口径直接拒绝', () => {
+    assert.equal(bad.json.result.ok, false);
+    assert.match(bad.json.result.error, /all|work|personal/);
+  });
+
+  const projectReport = await B.ok({ action: 'report_create', type: 'project', project: '私人阅读', date: '2026-10-22', category: 'work' });
+  check('项目维度忽略分类口径：选了个人项目就照它出', () => {
+    assert.equal(projectReport.data.report.facts.meta.categoryScope, 'all');
+    assert.match(projectReport.data.report.content, /读完架构书/);
+  });
+
+  // ── 标题前缀 ──
+  await B.ok({ action: 'settings_update', settings: { reportTitlePrefix: 'AI治理项目周报' } });
+  const titled = (await weekly('2026-10-22', 'work')).data.report;
+  check('简报标题前缀进正文首行，记录标题仍带 ISO 周号', () => {
+    assert.ok(
+      titled.content.startsWith('AI治理项目周报（2026.10.19-2026.10.23）\n一、本周总结\n'),
+      `首行不对：${JSON.stringify(titled.content.slice(0, 60))}`,
+    );
+    assert.match(titled.title, /^周报 · 2026 W\d/);
+  });
+
+  // ── 自定义模板复刻新版式 ──
+  const personalBase = (await weekly('2026-10-22', 'personal')).data.report;
+  await B.ok({
+    action: 'settings_update',
+    settings: { reportTemplate: '{{title}}\n一、本周总结\n{{weeklyCompleted}}\n二、下周计划\n{{nextPlan}}' },
+  });
+  const custom = (await weekly('2026-10-22', 'personal')).data.report;
+  check('{{title}} / {{weeklyCompleted}} / {{nextPlan}} 能复刻内置版式', () => {
+    assert.equal(custom.content, personalBase.content);
+  });
+
+  await B.ok({ action: 'settings_update', settings: { reportTemplate: '{{nextWeek}}', reportTitlePrefix: '' } });
+  const alias = (await weekly('2026-10-22', 'personal')).data.report;
+  check('{{nextWeek}} 就是 {{nextPlan}} 的别名', () => {
+    assert.equal(alias.content, '1.私人阅读\n  1）周末整理书架');
+  });
+
+  await B.ok({ action: 'settings_update', settings: { reportTemplate: '' } });
+  const plain = (await weekly('2026-10-22', 'work')).data.report;
+  check('标题前缀留空回落到「周报」', () => {
+    assert.ok(plain.content.startsWith('周报（2026.10.19-2026.10.23）'), `前缀留空应回落到「周报」：${plain.content.slice(0, 30)}`);
+  });
+
+  // ── Agent 工具默认口径 ──
+  const toolDraft = await B.tool('workbench_report', { action: 'draft', type: 'weekly', date: '2026-10-22' });
+  check('workbench_report draft 默认按「全部」出，并写明分类口径', () => {
+    assert.match(toolDraft, /分类口径：全部/);
+    assert.match(toolDraft, /周会纪要/);
+    assert.match(toolDraft, /读完架构书/);
+  });
+
+  const toolPersonal = await B.tool('workbench_report', { action: 'draft', type: 'weekly', date: '2026-10-22', category: 'personal' });
+  check('workbench_report draft 支持 category=personal', () => {
+    assert.match(toolPersonal, /分类口径：仅个人/);
+    assert.match(toolPersonal, /读完架构书/);
+    assert.doesNotMatch(toolPersonal, /周会纪要/);
   });
 }
 
@@ -1225,9 +1369,10 @@ group('15. 「添加进周报文件」插到文件开头');
   check('写进去的是代码块包住的正文，且不带多余的空白', () => {
     const text = fsMod.readFileSync(mdFile, 'utf8');
     const block = text.split('#### 2026.10.19-2026.10.23 - 小组')[1].split('#### 2026.09.07')[0];
-    assert.match(block, /```\n本周完成：\n/, '正文应当包在代码块里');
-    assert.match(block, /1\.公共jdbc组件对接加密平台（100%）/);
-    assert.match(block, /2\.加密功能自测（10%）/);
+    assert.match(block, /```\n周报（2026\.10\.19-2026\.10\.23）\n一、本周总结\n/, '正文应当包在代码块里');
+    assert.match(block, /^1\.示例政务客户$/m);
+    assert.match(block, /^  1）公共jdbc组件对接加密平台$/m);
+    assert.match(block, /^  2）加密功能自测$/m);
     assert.match(block, /```\n\n$/, '代码块后面应当空一行');
   });
 

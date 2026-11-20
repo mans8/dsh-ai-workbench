@@ -594,7 +594,7 @@ group('2. 四个分页都能无异常渲染');
   const expectations = {
     today: ['AI 工作台账', '今日待办', '整理接口文档', '每日站会', '新增', '本周完成', '完成'],
     projects: ['订单中台', '对账系统', '新增项目', '完成'],
-    reports: ['生成报表', '周报', '报表库', '已归档'],
+    reports: ['生成简报', '周报', '简报库', '已归档'],
     stats: ['汇总', '完成率', '完成数分布'],
   };
 
@@ -946,71 +946,124 @@ group('3h. 报表页的兜底：缺字段也要渲染出来');
     react.presets({ WorkPage: { 2: 'reports' } });
     const text = textOf(react.render(react.createElement(slots.main.component, { api })).tree);
     assert.ok(!text.includes('加载中…'), '不该卡在加载中');
-    assert.ok(text.includes('报表库'), '报表库不见了');
+    assert.ok(text.includes('简报库'), '简报库不见了');
     assert.match(text, /草稿\s*\d+/, '草稿计数应当从列表里自己数出来');
   });
 
 }
 
-group('3f2. 周报日期可自定义，默认「本周一 ~ 本周五」');
+group('3f2. 生成简报弹窗：周报日期、分类口径与维度');
 {
-  /** 找到「生成报表」那张卡片。 */
-  function generateCard(tree) {
-    return findNode(tree, (n) => n.type === 'div' && /aw-card/.test(n.props?.className || '') && textOf(n).includes('生成草稿'));
+  /** 弹窗节点（卡片上也有同名按钮，一律在弹窗内部找）。 */
+  function findModal(element) {
+    return findNode(
+      react.render(element).tree,
+      (n) => n.type === 'div' && /aw-modal/.test(String(n.props?.className || '')) && textOf(n).includes('维度'),
+    );
+  }
+
+  /** 点「生成简报」按钮打开弹窗。 */
+  function openGenerate() {
+    const api = fakeApi('reports', views.reports);
+    react.presets({ WorkPage: { 2: 'reports' } });
+    const element = react.createElement(slots.main.component, { api });
+    const trigger = findNode(react.render(element).tree, (n) => n.type === 'button' && textOf(n).trim() === '生成简报');
+    assert.ok(trigger, '找不到「生成简报」按钮');
+    trigger.props.onClick();
+    const modal = findModal(element);
+    assert.ok(modal, '点按钮后没有弹出生成简报弹窗');
+    return { api, element, modal };
+  }
+
+  function dateInputs(node) {
+    const dates = [];
+    (function walk(n) {
+      if (!n) return;
+      if (n.type === 'input' && n.props?.type === 'date') dates.push(n);
+      for (const child of n.children || []) walk(child);
+    })(node);
+    return dates;
+  }
+
+  function submitButton(modal) {
+    return findNode(modal, (n) => n.type === 'button' && textOf(n).trim() === '生成简报');
   }
 
   check('默认给「本周一 ~ 本周五」两个日期框，不是单个锚点日期', () => {
-    const { tree } = renderPage('reports');
-    const card = generateCard(tree);
-    assert.ok(card, '找不到生成报表卡片');
-    const dates = [];
-    (function walk(node) {
-      if (!node) return;
-      if (node.type === 'input' && node.props?.type === 'date') dates.push(node);
-      for (const child of node.children || []) walk(child);
-    })(card);
+    const { modal } = openGenerate();
+    const dates = dateInputs(modal);
     assert.equal(dates.length, 2, `周报应当有两个日期框，实际 ${dates.length} 个`);
     const from = new Date(`${dates[0].props.value}T00:00:00`);
     const to = new Date(`${dates[1].props.value}T00:00:00`);
     assert.equal(from.getDay(), 1, `起点应当是周一，实际 ${dates[0].props.value}（周${'日一二三四五六'[from.getDay()]}）`);
     assert.equal(to.getDay(), 5, `终点应当是周五，实际 ${dates[1].props.value}（周${'日一二三四五六'[to.getDay()]}）`);
     assert.equal((to - from) / 86400000, 4, '应当是连续 5 天');
-    assert.ok(findNode(card, (n) => n.type === 'input' && n.props?.title === '周报区间起点'), '起点日期框缺少说明');
-    assert.ok(findNode(card, (n) => n.type === 'input' && n.props?.title === '周报区间终点'), '终点日期框缺少说明');
-    // 周中的默认区间会包含今天之后的日子，这是预期行为
-    assert.equal(new Date(`${dates[1].props.value}T00:00:00`).getDay(), 5, '终点必须是周五');
+    assert.ok(findNode(modal, (n) => n.type === 'input' && n.props?.title === '周报区间起点'), '起点日期框缺少说明');
+    assert.ok(findNode(modal, (n) => n.type === 'input' && n.props?.title === '周报区间终点'), '终点日期框缺少说明');
   });
 
-  check('改日期后生成：请求里带上 from / to', () => {
-    const api = fakeApi('reports', views.reports);
-    react.presets({ WorkPage: { 2: 'reports' } });
-    const element = react.createElement(slots.main.component, { api });
+  check('表单竖排：一项一行、名称在上、控件占满整行', () => {
+    const { modal } = openGenerate();
+    const form = findNode(
+      modal,
+      (n) => n.type === 'div' && String(n.props?.className || '') === 'aw-form-vertical',
+    );
+    assert.ok(form, '生成弹窗应当用竖排表单容器（aw-form-vertical）');
+    assert.ok(!JSON.stringify(modal).includes('gridColumn'), '竖排表单里不该再有栅格列跨度');
 
-    const card = generateCard(react.render(element).tree);
-    const dates = [];
-    (function walk(node) {
-      if (!node) return;
-      if (node.type === 'input' && node.props?.type === 'date') dates.push(node);
-      for (const child of node.children || []) walk(child);
-    })(card);
-    dates[0].props.onChange({ target: { value: '2026-10-01' } });
+    const fields = [];
+    (function walk(n) {
+      if (!n) return;
+      if (n.type === 'div' && String(n.props?.className || '') === 'aw-field') {
+        fields.push(n);
+        return;
+      }
+      for (const child of n.children || []) walk(child);
+    })(form);
 
-    const after = react.render(element).tree;
-    findNode(generateCard(after), (n) => n.type === 'button' && textOf(n).trim() === '生成草稿').props.onClick();
+    assert.deepEqual(
+      fields.map((field) => textOf(field.children[0]).trim()),
+      ['维度', '类型', '项目分类', '区间起点', '区间终点'],
+      '字段应当按填写顺序从上往下排',
+    );
+    for (const field of fields) {
+      assert.ok(field.children.length >= 2, `「${textOf(field.children[0]).trim()}」缺少输入区`);
+      assert.equal(field.props.style, undefined, '字段名在上、控件全宽交给 CSS，不再逐项写行内样式');
+    }
+  });
+
+  check('项目分类默认「仅工作」，三个选项齐全', () => {
+    const { modal } = openGenerate();
+    const select = findNode(
+      modal,
+      (n) =>
+        n.type === 'select' &&
+        (n.children || []).some((o) => o.type === 'option' && textOf(o).trim() === '仅工作'),
+    );
+    assert.ok(select, '找不到项目分类下拉');
+    assert.equal(select.props.value, 'work', '默认应当是仅工作');
+    const options = (select.children || []).map((o) => textOf(o).trim());
+    assert.deepEqual(options, ['全部', '仅工作', '仅个人']);
+  });
+
+  check('改日期后生成：请求里带上 from / to 与分类口径', () => {
+    const { api, element, modal } = openGenerate();
+    dateInputs(modal)[0].props.onChange({ target: { value: '2026-10-01' } });
+
+    const rerendered = findModal(element);
+    submitButton(rerendered).props.onClick();
 
     const creates = api.calls.filter((c) => c[0] === 'send' && c[1] === 'report_create');
     assert.equal(creates.length, 1);
     assert.equal(creates[0][2].from, '2026-10-01', '应当带上自定义起点');
     assert.ok(creates[0][2].to, '应当带上终点');
     assert.equal(creates[0][2].type, 'weekly');
+    assert.equal(creates[0][2].category, 'work', '默认按仅工作生成');
   });
 
   check('没改日期时只发 date，让宿主按默认口径算', () => {
-    const api = fakeApi('reports', views.reports);
-    react.presets({ WorkPage: { 2: 'reports' } });
-    const element = react.createElement(slots.main.component, { api });
-    const card = generateCard(react.render(element).tree);
-    findNode(card, (n) => n.type === 'button' && textOf(n).trim() === '生成草稿').props.onClick();
+    const { api, element, modal } = openGenerate();
+    submitButton(modal).props.onClick();
 
     const creates = api.calls.filter((c) => c[0] === 'send' && c[1] === 'report_create');
     assert.equal(creates.length, 1);
@@ -1018,22 +1071,39 @@ group('3f2. 周报日期可自定义，默认「本周一 ~ 本周五」');
     assert.ok(!('from' in creates[0][2]) && !('to' in creates[0][2]), '没改就别传 from/to');
   });
 
+  check('切换分类口径会带进请求', () => {
+    const { api, element, modal } = openGenerate();
+    const select = findNode(
+      modal,
+      (n) =>
+        n.type === 'select' &&
+        (n.children || []).some((o) => o.type === 'option' && textOf(o).trim() === '仅个人'),
+    );
+    select.props.onChange({ target: { value: 'personal' } });
+    submitButton(findModal(element)).props.onClick();
+
+    const creates = api.calls.filter((c) => c[0] === 'send' && c[1] === 'report_create');
+    assert.equal(creates[0][2].category, 'personal');
+  });
+
   check('切到月报时回到单个日期框', () => {
-    const api = fakeApi('reports', views.reports);
-    react.presets({ WorkPage: { 2: 'reports' } });
-    const element = react.createElement(slots.main.component, { api });
-    const card = generateCard(react.render(element).tree);
-    const typeSelect = findNode(card, (n) => n.type === 'select' && (n.children || []).some((o) => o.type === 'option' && textOf(o).includes('周报')));
+    const { element } = openGenerate();
+    const typeSelect = findNode(
+      findModal(element),
+      (n) => n.type === 'select' && (n.children || []).some((o) => o.type === 'option' && textOf(o).includes('周报')),
+    );
     typeSelect.props.onChange({ target: { value: 'monthly' } });
 
-    const after = generateCard(react.render(element).tree);
-    const dates = [];
-    (function walk(node) {
-      if (!node) return;
-      if (node.type === 'input' && node.props?.type === 'date') dates.push(node);
-      for (const child of node.children || []) walk(child);
-    })(after);
+    const dates = dateInputs(findModal(element));
     assert.equal(dates.length, 1, '月报只要一个锚点日期');
+  });
+
+  check('项目维度下不再显示项目分类', () => {
+    const { element } = openGenerate();
+    findNode(findModal(element), (n) => n.type === 'button' && textOf(n).trim() === '项目维度').props.onClick();
+    const modal = findModal(element);
+    assert.ok(!textOf(modal).includes('项目分类'), '项目维度不该出现项目分类');
+    assert.ok(textOf(modal).includes('选择项目'), '项目维度应当有项目下拉');
   });
 }
 
@@ -1049,19 +1119,25 @@ group('4. 交互组件：设置弹层 / 日期编辑器 / 报表编辑器');
     const updates = api.calls.filter((c) => c[0] === 'send' && c[1] === 'settings_update');
     assert.equal(updates.length, 1, `应当只发一次 settings_update：${JSON.stringify(api.calls)}`);
     assert.deepEqual(Object.keys(updates[0][2].settings).sort(), [
-      'reportFiles', 'reportFooter', 'reportSignature', 'reportTemplate',
+      'reportFiles', 'reportFooter', 'reportSignature', 'reportTemplate', 'reportTitlePrefix',
     ]);
   });
 
   check('设置弹层渲染成功：保留日历/报表设置，删除工时口径', () => {
-    const { text, effectErrors } = renderPage('reports', { WorkPage: { 2: 'reports', 3: true } });
+    const { tree, text, effectErrors } = renderPage('reports', { WorkPage: { 2: 'reports', 3: true } });
     assert.equal(effectErrors.length, 0, effectErrors.map((e) => e.message).join('; '));
     assert.ok(text.includes('设置'), '缺少设置标题');
-    for (const section of ['外观', '报表', '节假日与调休', '危险操作']) {
+    for (const section of ['外观', '简报', '节假日与调休', '危险操作']) {
       assert.ok(text.includes(section), `缺少设置分组「${section}」`);
     }
     assert.ok(text.includes('内置日历'), '缺少内置日历信息');
     assert.ok(text.includes('2026-10-14'), '缺少已有的手工覆盖项');
+    assert.ok(text.includes('简报标题前缀'), '缺少简报标题前缀设置项');
+    const prefixInput = findNode(
+      tree,
+      (n) => n.type === 'input' && n.props && n.props.value === views.bootstrap.settings.reportTitlePrefix,
+    );
+    assert.ok(prefixInput, '简报标题前缀输入框应当回填 bootstrap 里的值');
     for (const gone of ['工时口径', '每日工时', '职级名称', '职级系数', '口径说明', '{{hours}}']) {
       assert.ok(!text.includes(gone), `设置里不该再出现「${gone}」`);
     }
@@ -1082,7 +1158,7 @@ group('4. 交互组件：设置弹层 / 日期编辑器 / 报表编辑器');
     // 没改过内容时不该出现「保存」
     assert.ok(!labels.includes('保存'), '没改动时不该一直显示保存按钮');
     assert.ok(/周报/.test(text), 'Markdown 预览没有渲染出标题');
-    assert.ok(/本周完成/.test(text), 'Markdown 预览没有渲染出章节');
+    assert.ok(/本周总结/.test(text), 'Markdown 预览没有渲染出章节');
   });
 
   check('改了内容才出现「保存」，改回原样又消失', () => {
@@ -1805,7 +1881,7 @@ group('3g2. 分页条永远看得见');
       if (node.type === 'button' && /aw-tab( |$)/.test(String(node.props?.className || ''))) labels.push(textOf(node).trim());
       for (const child of node.children || []) walk(child);
     })(tree);
-    assert.deepEqual(labels, ['今日', '项目', '报表', '统计']);
+    assert.deepEqual(labels, ['今日', '项目', '简报', '统计']);
   });
 }
 
@@ -1913,6 +1989,11 @@ group('3d. 待办行的排版约束（一行放下 + 边框可见）');
   check('行高 40px（紧凑台账行距）', () => {
     assert.match(css, /^\.aw-row\{[^}]*min-height:40px/m);
     assert.match(css, /^\.aw-row\{[^}]*padding:4px 8px/m);
+  });
+
+  check('选中的分段按钮 hover 时仍保持选中色', () => {
+    // 分段开关被做大之后，hover 把选中态冲成浅底就等于看不出选中了
+    assert.match(css, /\.aw-btn\.is-on:hover:not\(:disabled\)\{[^}]*background:var\(--accent-hi\)/);
   });
 
   check('标题吃满剩余宽度、元信息与操作靠右，右侧不留空白', () => {

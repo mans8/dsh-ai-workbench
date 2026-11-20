@@ -3187,3 +3187,75 @@ gate 40 是 **Floor 级，Hallmark 不允许豁免** —— 所以它不会变�
 
 - `npm test` 全绿（Host + Client 两套）
 - 新增两条 Client 断言覆盖新入口：渲染与提交
+
+## A57. 简报：生成改弹窗 + 项目分类口径 + 新版周报 + 「报表」改名「简报」（2026-11-20）
+
+用户要求：**生成报表做成模块里的一个按钮，点击弹表单，表单增加「项目分类」（全部 / 仅工作 / 仅个人，默认仅工作），生成的报表按分类滤掉不符合的项目周报；「报表」模块改名「简报」。** 第二轮又给了公司周报模板，要求周报正文照它排。
+
+### 一轮确认后的口径
+
+| 决策 | 结论 |
+|---|---|
+| 入口 | 删掉「报表页顶部的生成卡片」，改在「简报库」标题右侧放主按钮「生成简报」，点击弹 `Modal`；生成成功后关闭弹窗并直接打开这份草稿 |
+| 弹窗字段 | 维度切换（时间 / 项目）、周 / 月 / 年、周报起止日期（默认本周一 ~ 周五，可回到默认）、定位日期、项目下拉；时间维度才有「项目分类」 |
+| 默认状态 | 每次打开都重置为「时间维度 / 周报 / 本周 / 仅工作」，不记忆上次选择 |
+| 分类过滤时机 | 在 `buildReportFacts` 取数时裁剪 logs / todos，所有章节与计数口径一致（本周总结、未完成、放弃 / 漏做、下周计划、totals、byProject） |
+| 未归类条目 | 没有 `projectId` 的算**工作**：`全部` 与 `仅工作` 都包含，`仅个人` 不包含 |
+| 适用范围 | 周报 / 月报 / 年报都生效；项目维度忽略分类（scope 记 `all`） |
+| 入档 | 分类冻结进 `facts.meta.categoryScope`；重渲染沿用；简报列表不加标签 |
+| Agent 工具 | `workbench_report` 的 `draft` 新增 `category`（all / work / personal），默认 `all`；`report_create` 不传时也按 `all`，保持老调用方行为 |
+| 周报版式 | 首行 `前缀（2026.11.9-2026.11.13）`；`一、本周总结` / `二、下周计划`；项目按**建项目的先后**，未归类垫底；`1.项目` + 两空格缩进 `1）事项`；不写百分比、不展开说明；组间与节间不空行；纯文本 |
+| 本周总结 | 区间内完成 / 记录过的事 + 区间结束时仍未了结的事（口径不变） |
+| 下周计划 | 所有未归档、未放弃、未完成的待办，按项目分组（口径不变） |
+| 标题前缀 | 新增设置项 `reportTitlePrefix`（默认「周报」；留空回落「周报」）；记录的 title 仍是 `周报 · 2026 W46（…）` |
+| 适用范围 | 只替换内置周报模板；月报 / 年报 / 项目维度版式不变；自定义模板优先级不变 |
+| 自定义模板 | `{{weeklyCompleted}}` 与 `{{nextWeek}}` 输出改成新分组格式；新增 `{{nextPlan}}` 作为 `{{nextWeek}}` 别名；周报下 `{{title}}` 渲染正文首行 |
+| 改名范围 | 只改用户可见中文（分页、卡片标题、设置分组与标签、空状态、副标题、README）；`report_*` action、`lib/reports.js`、`state.reports`、`workbench_report` 一律不动 |
+
+### 代码变化
+
+| 文件 | 变化 |
+|---|---|
+| `lib/state.js` | `DEFAULT_SETTINGS.reportTitlePrefix = '周报'`；`normalizeSettings` 同步 |
+| `lib/reports.js` | 新增 `CATEGORY_SCOPES` / `normalizeCategoryScope` / `categoryScopeLabel` / `reportHeaderLine`；`buildReportFacts` 先按分类裁剪再聚合，`meta.categoryScope`、`nextGroups` 入快照；周报内置模板换成公司模板；自定义模板的 `title` / `weeklyCompleted` / `nextWeek` / `nextPlan` 同步 |
+| `lib/actions.js` | `reportCreate` 校验并透传 `category`；`settings_update` 支持 `reportTitlePrefix` |
+| `lib/domain.js` | `bootstrapView().settings` 补上 `reportTitlePrefix` —— 少了它，设置弹层每次打开都回落到「周报」，保存时会把已存的前缀覆盖掉（真实浏览器验证时抓到） |
+| `lib/tools.js` | `workbench_report` 新增 `category` 参数与描述；`factsSummaryText` 输出分类口径 |
+| `client.js` | 生成卡片换成按钮 + `Modal`（分类、维度、类型、日期都在弹窗里）；设置分组与标签改「简报」，新增「简报标题前缀」；分页 / 副标题 / 空状态改名；`BUILD` 升到 A57 |
+| `README.md` | 模块表、简报章节、设置项、占位符、状态结构、测试数量同步 |
+| `test/host.test.mjs` | 周报断言改新版式；新增 14b 组覆盖三种分类口径、未归类 / 项目维度、标题前缀、占位符复刻、工具默认 `all` |
+| `test/client.test.mjs` | 生成卡片用例改为「点按钮开弹窗」；新增分类默认值与切换、项目维度隐藏分类；改名断言同步 |
+
+### 验证
+
+- `npm test` 全绿：Host 130 项断言 / Client 105 项断言
+- 旧简报（没有 `nextGroups` / `categoryScope` 的快照）仍能重渲染：`nextGroupsOf` 会按 `projectId` 现分一次组
+- 生成后的草稿正文逐字对齐用户模板（`周报（2026.10.19-2026.10.23）` / `一、本周总结` / `1.示例银行-村镇银行` / `  1）…`）
+- 真实浏览器（`test/browser`，端口 8791）点检：分页「简报」、主按钮「生成简报」、弹窗默认「时间维度 / 周报 / 仅工作 / 本周一~周五」、生成后弹窗关闭且直接打开草稿，`window.__errors` 为空
+
+## A58. 生成简报弹窗改成竖排表单（2026-11-20）
+
+用户要求：**「按顺序填写的表单上下排，名称放上面，输入区用全宽」**。原版用 12 栏栅格把「维度 / 类型 / 项目分类」挤在一行（各占 4 栏），日期再起一行，字段像仪表盘而不是表单。
+
+| 决策 | 结论 |
+|---|---|
+| 结构 | 换成已有的 `.aw-form-vertical`（新建待办弹窗同款）：一项一行、label 在上、控件占满整行 |
+| 顺序 | 维度 → 类型（或项目）→ 项目分类 → 区间起点 → 区间终点 → 定位日期；跟着填写顺序走，不做视觉分组 |
+| 维度开关 | 新增 `.aw-seg`：两个选项平分整行宽度，高度取 `--ctl-h`，和下拉、日期框同高，竖排里不出现矮一档的控件 |
+| 「回到默认」 | 只有改过周报区间才出现，改成最后一行的小号幽灵按钮（左对齐），不再占用一格栅格 |
+| 顺手修 | `.aw-btn:hover` 特异性高于 `.aw-btn.is-on`，鼠标停在选中的分段上会把它冲成浅底、看起来像没选中；补 `.aw-btn.is-on:hover:not(:disabled)` 保持靛蓝实心 |
+
+### 代码变化
+
+| 文件 | 变化 |
+|---|---|
+| `client.js` | 生成简报弹窗去掉 `repeat(12, …)` 栅格与 `gridColumn` 行内样式，改用 `.aw-form-vertical`；新增 `.aw-seg` 与 `.aw-btn.is-on:hover` 规则；`BUILD` 升到 A58 |
+| `design.md` | §4.7 写明「表单弹层一律竖排」与选中态 hover 的要求；§9 版本行 |
+| `test/client.test.mjs` | 3f2 新增「表单竖排：一项一行、名称在上、控件占满整行」（容器类名、字段顺序、无 `gridColumn`、字段不再带行内样式）；3d 新增「选中的分段按钮 hover 时仍保持选中色」 |
+
+### 验证
+
+- `npm test` 全绿：Host 130 项 / Client 107 项
+- 真实浏览器量到：弹窗 660px，五个字段区宽 604px、控件高 50px、label 与控件间距 25px（label 高 19 + gap 6），分段按钮各 298px
+- 切到项目维度：字段变「维度 / 项目 / 定位月份」，项目下拉同样 604px；hover 在选中分段上背景仍是 `--accent-hi`、文字为白
+- `impeccable detect --scope layout` 无发现；`window.__errors` 为空
